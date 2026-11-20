@@ -1262,3 +1262,166 @@ body,
   color: #fff;
   margin-top: 3px;
 }
+
+/* ================= FANTASTICAL ANIMATED INTRO SPLASH ================= */
+.intro-splash {
+  pointer-events: auto;
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 50% 45%, rgba(88, 28, 135, 0.92) 0%, rgba(12, 8, 38, 0.98) 72%);
+  overflow: hidden;
+  transition: opacity 0.55s ease, transform 0.55s ease;
+  cursor: pointer;
+}
+
+.intro-splash.fade-out {
+  opacity: 0;
+  transform: scale(1.08);
+  pointer-events: none;
+}
+
+.intro-rays {
+  position: absolute;
+  width: min(140vw, 900px);
+  height: min(140vw, 900px);
+  background: repeating-conic-gradient(
+    from 0deg,
+    rgba(255, 211, 42, 0.14) 0deg 12deg,
+    transparent 12deg 24deg
+  );
+  border-radius: 50%;
+  animation: spinSlow 14s linear infinite;
+  pointer-events: none;
+}
+
+.intro-ring {
+  position: absolute;
+  width: 260px;
+  height: 260px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 211, 42, 0.55);
+  box-shadow: 0 0 50px rgba(255, 211, 42, 0.4), inset 0 0 40px rgba(165, 94, 234, 0.45);
+  animation: introPulseRing 1.6s ease-out infinite;
+  pointer-events: none;
+}
+
+.intro-content {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+  animation: introZoomIn 0.85s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.intro-crown {
+  font-size: 74px;
+  display: block;
+  margin-bottom: -8px;
+  filter: drop-shadow(0 0 24px rgba(255, 211, 42, 0.9));
+  animation: introCrownDrop 0.75s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.intro-title {
+  font-family: 'Fredoka', sans-serif;
+  font-size: clamp(54px, 14vw, 88px);
+  font-weight: 700;
+  letter-spacing: 3px;
+  background: linear-gradient(180deg, #fff9c4 0%, #ffd32a 52%, #ff7f50 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 8px 0 #1e1b3a) drop-shadow(0 0 32px rgba(255, 211, 42, 0.55));
+}
+
+.intro-tagline {
+  margin-top: 10px;
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  color: #fff;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  animation: fadeUpIn 0.6s ease 0.45s forwards;
+}
+
+.intro-skip {
+  position: absolute;
+  bottom: max(26px, env(safe-area-inset-bottom));
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.65);
+  letter-spacing: 0.5px;
+}
+
+.match-intro-sub {
+  position: fixed;
+  top: calc(50% - 92px);
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: 'Fredoka', sans-serif;
+  font-size: clamp(18px, 4.5vw, 28px);
+  color: #fff;
+  background: rgba(22, 16, 66, 0.85);
+  border: 2.5px solid var(--gold);
+  padding: 6px 20px;
+  border-radius: 999px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+@keyframes spinSlow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes introPulseRing {
+  0% {
+    transform: scale(0.75);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.65);
+    opacity: 0;
+  }
+}
+
+@keyframes introZoomIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.55) translateY(24px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes introCrownDrop {
+  0% {
+    transform: translateY(-60px) scale(0.4) rotate(-18deg);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0) scale(1) rotate(0deg);
+    opacity: 1;
+  }
+}
+
+@keyframes fadeUpIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

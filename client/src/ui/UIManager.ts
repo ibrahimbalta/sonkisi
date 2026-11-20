@@ -95,6 +95,34 @@ export class UIManager {
     this.toastRoot = document.getElementById('toast-container')!;
     this.actions = actions;
     this.render();
+    this.playIntroSplash();
+  }
+
+  private playIntroSplash() {
+    const splash = document.createElement('div');
+    splash.className = 'intro-splash';
+    splash.innerHTML = `
+      <div class="intro-rays"></div>
+      <div class="intro-ring"></div>
+      <div class="intro-content">
+        <span class="intro-crown">👑</span>
+        <div class="intro-title">SON KİŞİ</div>
+        <div class="intro-tagline">✨ GÖKYÜZÜ ARENASINA HOŞ GELDİN ✨</div>
+      </div>
+      <div class="intro-skip">Geçmek için dokun</div>
+    `;
+    document.body.appendChild(splash);
+
+    let dismissed = false;
+    const dismiss = () => {
+      if (dismissed) return;
+      dismissed = true;
+      splash.classList.add('fade-out');
+      setTimeout(() => splash.remove(), 580);
+    };
+
+    splash.addEventListener('click', dismiss);
+    setTimeout(dismiss, 2300);
   }
 
   public showToast(message: string, isError = false) {
@@ -814,6 +842,7 @@ export class UIManager {
             <div class="disaster-pill" id="disaster-pill" style="display:none;"></div>
           </div>
 
+          <div class="match-intro-sub" id="match-intro-sub" style="display:none;">⚔️ GÖKYÜZÜ ARENASI AÇILIYOR!</div>
           <div class="center-countdown" id="center-countdown" style="display:none;">3</div>
         </div>
 
@@ -1087,10 +1116,15 @@ export class UIManager {
     const fillEl = document.getElementById('safe-timer-fill');
     const numEl = document.getElementById('safe-timer-num');
     const centerCd = document.getElementById('center-countdown');
+    const matchIntroSub = document.getElementById('match-intro-sub');
 
     if (levelEl) levelEl.textContent = `${levelDef.icon} Lv.${levelDef.level} ${levelDef.name}`;
     if (roundEl) roundEl.textContent = `Tur ${Math.max(1, state.round)}`;
     if (aliveEl) aliveEl.textContent = `👥 ${state.aliveCount} / ${state.totalMatchPlayers}`;
+
+    if (matchIntroSub) {
+      matchIntroSub.style.display = state.phase === 'starting' ? 'block' : 'none';
+    }
 
     // Live Standings panel update
     const standingsInfo = document.getElementById('standings-level-info');

@@ -154,6 +154,7 @@ export class ThreeArenaEngine {
   private meteors = new Map<string, { group: THREE.Group; rock: THREE.Mesh; ring: THREE.Mesh }>();
   private shockwaves: { mesh: THREE.Mesh; life: number; maxLife: number }[] = [];
   private cameraShake = 0;
+  private matchIntroTimer = 0;
   private currentDisaster = 'none';
   private windX = 0;
   private windY = 0;
@@ -887,6 +888,11 @@ export class ThreeArenaEngine {
     this.syncPowerUps(state.powerUps ?? []);
     this.syncMeteors(state.meteors ?? []);
 
+    // Trigger dramatic camera swoop when match enters starting (3-2-1!) phase
+    if (prevPhase !== 'starting' && state.phase === 'starting') {
+      this.matchIntroTimer = 2.8;
+    }
+
     // Trigger dramatic camera shake when tiles drop!
     if (prevPhase !== 'drop' && state.phase === 'drop') {
       this.cameraShake = 0.55;
@@ -1228,22 +1234,39 @@ export class ThreeArenaEngine {
       const targetCamY = isPortrait ? 28.5 : 23.5;
       const targetCamZ = isPortrait ? focusZ * 0.45 + 21.5 : focusZ * 0.2 + 22.5;
 
-      const camLerp = Math.min(1, dt * 5);
-      this.camera.position.x += (targetCamX - this.camera.position.x) * camLerp;
-      this.camera.position.y += (targetCamY - this.camera.position.y) * camLerp;
-      this.camera.position.z += (targetCamZ - this.camera.position.z) * camLerp;
-
-      if (this.cameraShake > 0.01) {
-        this.camera.position.x += (Math.random() - 0.5) * this.cameraShake;
-        this.camera.position.y += (Math.random() - 0.5) * this.cameraShake;
-        this.cameraShake *= Math.pow(0.015, dt);
+      if (this.matchIntroTimer > 0 && this.currentPhase === 'starting') {
+        // Epic cinematic swoop around the floating arena during 3-2-1 countdown,
+        // landing seamlessly in gameplay position the instant round 1 begins!
+        this.matchIntroTimer = Math.max(0, this.matchIntroTimer - dt);
+        const progress = 1 - this.matchIntroTimer / 2.8;
+        const ease = 1 - Math.pow(1 - progress, 3);
+        const sweepAngle = (1 - ease) * 1.15;
+        const dist = 34 - ease * (34 - targetCamZ);
+        this.camera.position.set(
+          Math.sin(sweepAngle) * dist + targetCamX * ease,
+          14 + ease * (targetCamY - 14),
+          Math.cos(sweepAngle) * dist
+        );
+        this.camera.lookAt(focusX * 0.2 * ease, -0.8, focusZ * 0.2 * ease);
       } else {
-        this.cameraShake = 0;
-      }
+        this.matchIntroTimer = 0;
+        const camLerp = Math.min(1, dt * 5);
+        this.camera.position.x += (targetCamX - this.camera.position.x) * camLerp;
+        this.camera.position.y += (targetCamY - this.camera.position.y) * camLerp;
+        this.camera.position.z += (targetCamZ - this.camera.position.z) * camLerp;
 
-      const lookX = isPortrait ? focusX * 0.45 : focusX * 0.15;
-      const lookZ = isPortrait ? focusZ * 0.4 + 0.8 : focusZ * 0.15 + 1.2;
-      this.camera.lookAt(lookX, -0.8, lookZ);
+        if (this.cameraShake > 0.01) {
+          this.camera.position.x += (Math.random() - 0.5) * this.cameraShake;
+          this.camera.position.y += (Math.random() - 0.5) * this.cameraShake;
+          this.cameraShake *= Math.pow(0.015, dt);
+        } else {
+          this.cameraShake = 0;
+        }
+
+        const lookX = isPortrait ? focusX * 0.45 : focusX * 0.15;
+        const lookZ = isPortrait ? focusZ * 0.4 + 0.8 : focusZ * 0.15 + 1.2;
+        this.camera.lookAt(lookX, -0.8, lookZ);
+      }
 
       // Poll keyboard + joystick input
       const activeTag = document.activeElement?.tagName;
