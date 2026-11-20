@@ -3,6 +3,7 @@ import { REACTION_EMOJIS } from '../../shared/src/index';
 import { soundManager } from './audio/SoundManager';
 import { ThreeArenaEngine } from './game/ThreeArenaEngine';
 import { NetworkManager, RoomStateSnapshot } from './services/NetworkManager';
+import { simulatorService } from './services/SimulatorService';
 import { storageService } from './services/StorageService';
 import { supabaseService } from './services/SupabaseService';
 import { ConfettiController } from './ui/Confetti';
@@ -79,6 +80,24 @@ async function bootstrap() {
       }
     },
 
+    onSimulateMatch: async () => {
+      try {
+        const p = storageService.getProfile();
+        lastRoomWasPrivate = true;
+        const code = await network.createPrivate(p.username, p.avatarId);
+        phaser.setLocalSessionId(network.sessionId);
+        ui.setLocalSessionId(network.sessionId);
+        ui.enterRoomView();
+        ui.showToast('🤖 9 simülasyon oyuncusu arenaya katılıyor...');
+        await simulatorService.spawnIntoPrivateRoom(network.endpoint, code, 9);
+        network.sendStartPrivate();
+      } catch (err) {
+        console.error(err);
+        await simulatorService.stopAll();
+        ui.showToast('Simülasyon başlatılamadı. Sunucu bağlantısını kontrol edin.', true);
+      }
+    },
+
     onStartPrivate: () => {
       network.sendStartPrivate();
     },
@@ -118,6 +137,7 @@ async function bootstrap() {
 
     onLeaveRoom: async () => {
       confetti.stop();
+      await simulatorService.stopAll();
       await network.leaveRoom();
       phaser.clearRoom();
       currentRoomState = null;

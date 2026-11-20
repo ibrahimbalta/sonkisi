@@ -25,6 +25,7 @@ export interface UIActions {
   onPlayPublic: () => Promise<void>;
   onCreatePrivate: () => Promise<void>;
   onJoinPrivate: (code: string) => Promise<void>;
+  onSimulateMatch: () => Promise<void>;
   onStartPrivate: () => void;
   onSelectLevel: (level: number) => void;
   onDash: () => void;
@@ -35,7 +36,7 @@ export interface UIActions {
   onProfileChanged: () => void;
 }
 
-type ModalType = 'none' | 'friends' | 'characters' | 'leaderboard' | 'settings';
+type ModalType = 'none' | 'friends' | 'characters' | 'leaderboard' | 'settings' | 'howto';
 type ViewMode = 'menu' | 'room';
 
 function escapeHtml(str: string): string {
@@ -323,6 +324,7 @@ export class UIManager {
               <button class="btn btn-purple" id="btn-characters">🎭 Karakterler</button>
               <button class="btn btn-orange" id="btn-settings">⚙️ Ayarlar</button>
             </div>
+            <button class="btn btn-ghost" style="width:100%;" id="btn-howto">📖 Nasıl Oynanır? / Simüle Et</button>
           </div>
         </div>
 
@@ -338,6 +340,46 @@ export class UIManager {
 
   private renderModalHtml(): string {
     if (this.activeModal === 'none') return '';
+
+    if (this.activeModal === 'howto') {
+      return `
+        <div class="modal-backdrop" id="modal-backdrop">
+          <div class="modal-card">
+            <div class="modal-header">
+              <div class="modal-title">📖 Nasıl Oynanır?</div>
+              <button class="close-btn" id="btn-close-modal">✕</button>
+            </div>
+            <div class="stack" style="font-size:14px;line-height:1.5;">
+              <div class="setting-row" style="flex-direction:column;align-items:flex-start;gap:4px;">
+                <strong style="color:var(--gold);">🎯 Temel Kural</strong>
+                <span>Ekranda açıklanan <strong>Güvenli Renge</strong> süre dolmadan koş! Süre bitince diğer tüm kareler boşluğa düşer. Ayakta kalan <strong>SON KİŞİ</strong> kazanır!</span>
+              </div>
+
+              <div class="setting-row" style="flex-direction:column;align-items:flex-start;gap:4px;">
+                <strong style="color:#00f5d4;">🎮 Kontroller & İtme</strong>
+                <span><strong>Bilgisayar:</strong> WASD / Yön Tuşları + <strong>Space (⚡ ATIL)</strong></span>
+                <span><strong>Mobil:</strong> Sol Joystick + Sağ <strong>⚡ ATIL</strong> butonu</span>
+                <span style="color:var(--text-muted);font-size:12px;">⚡ ATIL ile rakiplerine çarpıp onları güvenli kareden aşağı fırlatabilirsin!</span>
+              </div>
+
+              <div class="setting-row" style="flex-direction:column;align-items:flex-start;gap:4px;">
+                <strong style="color:#ff85c0;">✨ Güçler & Felaketler</strong>
+                <span>🛡️ <strong>Büyü Kalkanı:</strong> 1 kez düşmekten kurtarır</span>
+                <span>⚡ <strong>Hız İksiri:</strong> 4.5 saniye süper hız</span>
+                <span>☄️ <strong>Meteor</strong> • 🧊 <strong>Buz Zemini</strong> • 💣 <strong>Sıcak Bomba</strong> • 🌪️ <strong>Rüzgar</strong></span>
+              </div>
+
+              <button class="btn btn-play" style="font-size:18px;padding:14px;margin-top:4px;" id="btn-simulate-match">
+                🤖 10 Kişilik Maçı Simüle Et
+              </button>
+              <div style="text-align:center;font-size:11px;color:var(--text-muted);">
+                Özel test odası açar, 9 simülasyon rakibi ekler ve hemen başlatır.
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
 
     if (this.activeModal === 'friends') {
       return `
@@ -621,6 +663,18 @@ export class UIManager {
     click('btn-settings', () => {
       this.activeModal = 'settings';
       this.render();
+    });
+    click('btn-howto', () => {
+      this.activeModal = 'howto';
+      this.render();
+    });
+    click('btn-simulate-match', () => {
+      const btn = document.getElementById('btn-simulate-match') as HTMLButtonElement | null;
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ Simülasyon Hazırlanıyor...';
+      }
+      this.actions.onSimulateMatch();
     });
     click('btn-open-profile', () => {
       this.activeModal = 'settings';
