@@ -90,6 +90,7 @@ export class UIManager {
   private joystick: VirtualJoystick | null = null;
   private lastCountdownInt = -1;
   private lastAnnouncedLevel = -1;
+  private lastKnownLives = 3;
   private levelBannerTimer: number | null = null;
 
   constructor(actions: UIActions) {
@@ -352,15 +353,14 @@ export class UIManager {
             </div>
             <div class="stack" style="font-size:14px;line-height:1.5;">
               <div class="setting-row" style="flex-direction:column;align-items:flex-start;gap:4px;">
-                <strong style="color:var(--gold);">🎯 Temel Kural</strong>
-                <span>Ekranda açıklanan <strong>Güvenli Renge</strong> süre dolmadan koş! Süre bitince diğer tüm kareler boşluğa düşer. Ayakta kalan <strong>SON KİŞİ</strong> kazanır!</span>
+                <strong style="color:var(--gold);">🎯 Temel Kural (3 Canlı Sumo & Engel Atlatma!)</strong>
+                <span>Zemin sağlamdır! Dönen 3D engellerden <strong>⬆️ ZIPLA</strong> ile atla, rakiplerini <strong>⚡ ATIL / 💥 İT</strong> ile kenardan aşağı fırlat! Herkesin <strong>3 Canı (❤️❤️❤️)</strong> var — son kalan şampiyon olur!</span>
               </div>
 
               <div class="setting-row" style="flex-direction:column;align-items:flex-start;gap:4px;">
-                <strong style="color:#00f5d4;">🎮 Kontroller & İtme</strong>
-                <span><strong>Bilgisayar:</strong> WASD / Yön Tuşları + <strong>Space (⚡ ATIL)</strong></span>
-                <span><strong>Mobil:</strong> Sol Joystick + Sağ <strong>⚡ ATIL</strong> butonu</span>
-                <span style="color:var(--text-muted);font-size:12px;">⚡ ATIL ile rakiplerine çarpıp onları güvenli kareden aşağı fırlatabilirsin!</span>
+                <strong style="color:#00f5d4;">🎮 Kontroller</strong>
+                <span><strong>Bilgisayar:</strong> WASD / Yön Tuşları • <strong>Space (⬆️ ZIPLA)</strong> • <strong>Shift/E (⚡ ATIL)</strong></span>
+                <span><strong>Mobil:</strong> Sol Joystick • Sağ <strong>⬆️ ZIPLA</strong> & <strong>⚡ ATIL</strong> butonları</span>
               </div>
 
               <div class="setting-row" style="flex-direction:column;align-items:flex-start;gap:4px;">
@@ -878,7 +878,7 @@ export class UIManager {
         <div id="game-hud" style="display:none;">
           <div class="hud-top">
             <div class="hud-pill">
-              <span id="hud-level" style="color:var(--gold);">☁️ Lv.1</span>
+              <span id="hud-lives">❤️❤️❤️</span>
               <span style="opacity:0.4;">|</span>
               <span id="hud-score" style="color:#00f5d4;">⭐ 0</span>
               <span style="opacity:0.4;">|</span>
@@ -1200,7 +1200,7 @@ export class UIManager {
 
     // Active match HUD
     const levelDef = getLevelByNumber(state.level);
-    const levelEl = document.getElementById('hud-level');
+    const livesEl = document.getElementById('hud-lives');
     const scoreEl = document.getElementById('hud-score');
     const aliveEl = document.getElementById('hud-alive');
     const bannerEl = document.getElementById('safe-color-banner');
@@ -1212,7 +1212,16 @@ export class UIManager {
     const centerCd = document.getElementById('center-countdown');
     const matchIntroSub = document.getElementById('match-intro-sub');
 
-    if (levelEl) levelEl.textContent = `${levelDef.icon} Lv.${levelDef.level}`;
+    const myLives = me?.lives ?? 3;
+    if (livesEl) {
+      livesEl.textContent = myLives > 0 ? '❤️'.repeat(myLives) : '☠️';
+    }
+    if (state.phase === 'starting') {
+      this.lastKnownLives = 3;
+    } else if (state.phase === 'scramble' && me && myLives < this.lastKnownLives && myLives > 0) {
+      this.lastKnownLives = myLives;
+      this.showToast(`💔 1 Can Gitti! Kalan: ${'❤️'.repeat(myLives)} (2.5s Koruma)`, true);
+    }
     if (scoreEl) scoreEl.textContent = `⭐ ${me?.score ?? 0}`;
     if (aliveEl) aliveEl.textContent = `👥 ${state.aliveCount} / ${state.totalMatchPlayers}`;
 
@@ -1306,8 +1315,8 @@ export class UIManager {
           labelEl.textContent = state.finalDuel
             ? '🔥 SON 2 OYUNCU — FİNAL!'
             : state.shrinkStage > 0
-            ? `⚠️ ARENA KÜÇÜLDÜ (${state.shrinkStage}/3)`
-            : '🏃 BASTIĞIN KARE 2s SONRA KAYBOLUR!';
+            ? `⚠️ ARENA DARALDI (${state.shrinkStage}/3)`
+            : '💥 RAKİPLERİ KENARDAN AT • ⬆️ ZIPLA!';
         }
         if (swatchEl) {
           swatchEl.style.background = hasEvent ? d.color : '#2ED573';

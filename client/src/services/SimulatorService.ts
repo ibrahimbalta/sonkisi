@@ -119,7 +119,10 @@ export class SimulatorService {
               const dist = Math.hypot(dx, dy);
               if (dist > 8) {
                 room.send(CLIENT_MESSAGES.INPUT, { dx: dx / dist, dy: dy / dist });
-                if (dist > 140 && Math.random() < 0.07) {
+                if (Math.random() < 0.08) {
+                  room.send(CLIENT_MESSAGES.JUMP);
+                }
+                if (dist > 110 && Math.random() < 0.09) {
                   room.send(CLIENT_MESSAGES.DASH);
                 }
               } else {

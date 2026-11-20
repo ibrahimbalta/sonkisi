@@ -117,8 +117,9 @@ export class SonKisiRoom extends Room<GameState> {
     this.state.level = 1;
     this.state.startingLevel = 1;
 
+    // Ensure Level 1 also has an exciting rotating Jump-Sweeper right from the start!
     this.generateTiles();
-    this.obstacleMotions = buildObstaclesForLevel(1, this.state.obstacles);
+    this.obstacleMotions = buildObstaclesForLevel(3, this.state.obstacles);
 
     this.onMessage(CLIENT_MESSAGES.INPUT, (client, payload: InputPayload) => {
       if (!payload || typeof payload !== 'object') return;
@@ -443,10 +444,13 @@ export class SonKisiRoom extends Room<GameState> {
     this.powerUpSpawnTimer = 3.0;
 
     this.generateTiles();
-    this.obstacleMotions = buildObstaclesForLevel(this.state.level, this.state.obstacles);
+    // Level 1 uses the iconic Jump-Sweeper + 4 bumpers (Level 3+ use their own unique obstacles)
+    const obsLevel = this.state.level === 1 ? 3 : this.state.level;
+    this.obstacleMotions = buildObstaclesForLevel(obsLevel, this.state.obstacles);
 
     this.state.players.forEach((p) => {
       p.alive = true;
+      p.lives = 3;
       p.eliminatedRank = 0;
       p.roundsSurvived = 0;
       p.hasShield = false;
@@ -508,6 +512,7 @@ export class SonKisiRoom extends Room<GameState> {
 
     this.state.players.forEach((p) => {
       p.alive = true;
+      p.lives = 3;
       p.eliminatedRank = 0;
       p.roundsSurvived = 0;
       p.hasShield = false;
@@ -662,31 +667,16 @@ export class SonKisiRoom extends Room<GameState> {
       if (!m) continue;
       m.timeLeft = Math.max(0, Math.round((m.timeLeft - dt) * 100) / 100);
       if (m.timeLeft <= 0) {
-        // Destroy impacted tile permanently!
-        const col = Math.floor(m.x / tileSize);
-        const row = Math.floor(m.y / tileSize);
-        if (
-          col >= 0 &&
-          col < ARENA_CONFIG.GRID_COLS &&
-          row >= 0 &&
-          row < ARENA_CONFIG.GRID_ROWS
-        ) {
-          const idx = row * ARENA_CONFIG.GRID_COLS + col;
-          this.state.tiles[idx] = -1;
-          this.tileCrackTimers.delete(idx);
-          this.electricTileIndices.delete(idx);
-        }
-
-        // Knock back nearby players
+        // Meteor blasts & knocks back nearby players (keeps floor solid — no frustrating random holes!)
         this.state.players.forEach((p) => {
           if (!p.alive || p.hasShield) return;
           const dx = p.x - m.x;
           const dy = p.y - m.y;
           const dist = Math.hypot(dx, dy);
-          if (dist < m.radius + 36) {
+          if (dist < m.radius + 45) {
             const nx = dist > 0.1 ? dx / dist : Math.cos(Math.random() * 6.28);
             const ny = dist > 0.1 ? dy / dist : Math.sin(Math.random() * 6.28);
-            this.knockbacks.set(p.sessionId, { vx: nx * 580, vy: ny * 580 });
+            this.knockbacks.set(p.sessionId, { vx: nx * 620, vy: ny * 620 });
           }
         });
 
@@ -699,11 +689,10 @@ export class SonKisiRoom extends Room<GameState> {
   private updateCrackingTiles(dt: number) {
     if (this.state.phase !== 'scramble') return;
 
+    // Floor stays 100% SOLID under footsteps! Only electrified tiles shock, and outer shrink rings collapse.
     const tileSize = ARENA_CONFIG.TILE_SIZE;
     this.state.players.forEach((p) => {
-      // Only grounded players crack tiles or get shocked by electric tiles!
       if (!p.alive || p.z > 0.15) return;
-
       const col = Math.floor(p.x / tileSize);
       const row = Math.floor(p.y / tileSize);
       if (
@@ -714,32 +703,21 @@ export class SonKisiRoom extends Room<GameState> {
       ) {
         const idx = row * ARENA_CONFIG.GRID_COLS + col;
         const val = this.state.tiles[idx];
-        if (val === undefined || val < 0) return;
-
-        // Electric tile hazard shock!
-        if (val >= 20) {
+        if (val !== undefined && val >= 20) {
           const nextShock = this.electricShockCooldown.get(p.sessionId) ?? 0;
           if (!p.hasShield && this.elapsedSec > nextShock) {
             this.electricShockCooldown.set(p.sessionId, this.elapsedSec + 0.9);
             const a = Math.random() * Math.PI * 2;
             this.knockbacks.set(p.sessionId, {
-              vx: Math.cos(a) * 460,
-              vy: Math.sin(a) * 460,
+              vx: Math.cos(a) * 520,
+              vy: Math.sin(a) * 520,
             });
           }
-          return;
-        }
-
-        // Intact tile (0..5) -> starts 2.0s crack animation, then permanently disappears!
-        if (val >= 0 && val < 10) {
-          this.state.tiles[idx] = val + 10;
-          this.tileCrackTimers.set(idx, SURVIVAL_CONFIG.TILE_CRACK_SEC);
-          p.score += 5;
         }
       }
     });
 
-    // Countdown cracking tiles -> permanently remove at 0
+    // Countdown only outer-ring arena shrink tiles!
     this.tileCrackTimers.forEach((left, idx) => {
       const next = left - dt;
       if (next <= 0) {
@@ -967,6 +945,7 @@ export class SonKisiRoom extends Room<GameState> {
             player.hasPushPower = true;
             this.pushPowerTimers.set(sid, SURVIVAL_CONFIG.PUSH_DURATION_SEC);
           }
+          player.score += 25;
           this.broadcast(SERVER_MESSAGES.POWERUP_PICKED, {
             sessionId: sid,
             kind: pu.kind,
@@ -1082,14 +1061,7 @@ export class SonKisiRoom extends Room<GameState> {
 
     const rankForBatch = aliveBefore;
     for (const p of falling) {
-      p.alive = false;
-      p.eliminatedRank = rankForBatch;
-
-      // Placement reward bonuses for 2nd & 3rd place!
-      if (p.eliminatedRank === 2) p.score += SURVIVAL_CONFIG.POINTS_SECOND;
-      else if (p.eliminatedRank === 3) p.score += SURVIVAL_CONFIG.POINTS_THIRD;
-
-      // Award Knockout Credit (+50) if someone pushed them within 3.5s
+      // Credit pusher on every ring-out!
       const push = this.lastPushedBy.get(p.sessionId);
       if (push && this.elapsedSec - push.at <= 3.5) {
         const killer = this.state.players.get(push.pusherId);
@@ -1104,6 +1076,27 @@ export class SonKisiRoom extends Room<GameState> {
         }
       }
       this.lastPushedBy.delete(p.sessionId);
+
+      // 3-Life System: lose 1 life & respawn safely with 2.5s Shield until 0 lives!
+      p.lives = Math.max(0, p.lives - 1);
+      if (p.lives > 0) {
+        const sp = this.getRandomSpawn();
+        p.x = sp.x;
+        p.y = sp.y;
+        p.z = 2.5;
+        this.verticalVel.set(p.sessionId, 0);
+        this.knockbacks.delete(p.sessionId);
+        p.hasShield = true;
+        this.shieldTimers.set(p.sessionId, 2.5);
+        continue;
+      }
+
+      // 0 lives left -> Eliminated!
+      p.alive = false;
+      p.eliminatedRank = rankForBatch;
+
+      if (p.eliminatedRank === 2) p.score += SURVIVAL_CONFIG.POINTS_SECOND;
+      else if (p.eliminatedRank === 3) p.score += SURVIVAL_CONFIG.POINTS_THIRD;
 
       const client = this.clients.find((c) => c.sessionId === p.sessionId);
       if (client) {

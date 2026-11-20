@@ -31,6 +31,7 @@ export interface PlayerSnapshot {
   hasDoubleJump: boolean;
   hasPushPower: boolean;
   hasBomb: boolean;
+  lives: number;
   kills: number;
   score: number;
   dashCooldown: number;
@@ -371,6 +372,7 @@ export class NetworkManager {
           hasDoubleJump: Boolean(p.hasDoubleJump),
           hasPushPower: Boolean(p.hasPushPower),
           hasBomb: Boolean(p.hasBomb),
+          lives: Number(p.lives ?? 3),
           kills: Number(p.kills ?? 0),
           score: Number(p.score ?? 0),
           dashCooldown: Number(p.dashCooldown ?? 0),

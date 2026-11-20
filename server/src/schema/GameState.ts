@@ -19,6 +19,7 @@ export class Player extends Schema {
   @type('boolean') hasDoubleJump: boolean = false;
   @type('boolean') hasPushPower: boolean = false;
   @type('boolean') hasBomb: boolean = false;
+  @type('number') lives: number = 3;
   @type('number') kills: number = 0;
   @type('number') score: number = 0;
   @type('number') dashCooldown: number = 0;
