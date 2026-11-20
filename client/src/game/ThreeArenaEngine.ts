@@ -185,6 +185,13 @@ export class ThreeArenaEngine {
   private joystickVec = { dx: 0, dy: 0 };
   private onInputCallback: ((dx: number, dy: number) => void) | null = null;
 
+  // Direct touch-to-steer on 3D arena floor
+  private raycaster = new THREE.Raycaster();
+  private floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  private touchPointerId: number | null = null;
+  private touchTarget: THREE.Vector3 | null = null;
+  private touchMarker!: THREE.Mesh;
+
   // Loop
   private rafId: number | null = null;
   private lastTime = performance.now();
@@ -231,11 +238,31 @@ export class ThreeArenaEngine {
     this.buildTileGrid();
     this.buildFantasyEnvironment();
 
+    // Glowing 3D floor marker for direct finger touch-to-steer
+    this.touchMarker = new THREE.Mesh(
+      new THREE.RingGeometry(0.42, 0.62, 24),
+      new THREE.MeshBasicMaterial({
+        color: 0x00f5d4,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.85,
+        depthWrite: false,
+      })
+    );
+    this.touchMarker.rotation.x = -Math.PI / 2;
+    this.touchMarker.position.y = 0.09;
+    this.touchMarker.visible = false;
+    this.scene.add(this.touchMarker);
+
     // Events
     window.addEventListener('resize', this.handleResize);
     window.addEventListener('keydown', this.handleKeyDown);
     window.addEventListener('keyup', this.handleKeyUp);
     window.addEventListener('blur', this.handleBlur);
+    this.renderer.domElement.addEventListener('pointerdown', this.handleCanvasPointerDown);
+    window.addEventListener('pointermove', this.handleCanvasPointerMove);
+    window.addEventListener('pointerup', this.handleCanvasPointerUp);
+    window.addEventListener('pointercancel', this.handleCanvasPointerUp);
 
     this.loop();
   }
@@ -1095,6 +1122,43 @@ export class ThreeArenaEngine {
 
   private handleBlur = () => {
     this.keysPressed.clear();
+    this.touchPointerId = null;
+    this.touchTarget = null;
+    this.touchMarker.visible = false;
+  };
+
+  private updateTouchTargetFromEvent(e: PointerEvent) {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1
+    );
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const hit = new THREE.Vector3();
+    if (this.raycaster.ray.intersectPlane(this.floorPlane, hit)) {
+      this.touchTarget = hit;
+      this.touchMarker.position.set(hit.x, 0.09, hit.z);
+      this.touchMarker.visible = true;
+    }
+  }
+
+  private handleCanvasPointerDown = (e: PointerEvent) => {
+    if (!this.isInRoom) return;
+    if (this.touchPointerId !== null) return;
+    this.touchPointerId = e.pointerId;
+    this.updateTouchTargetFromEvent(e);
+  };
+
+  private handleCanvasPointerMove = (e: PointerEvent) => {
+    if (e.pointerId !== this.touchPointerId) return;
+    this.updateTouchTargetFromEvent(e);
+  };
+
+  private handleCanvasPointerUp = (e: PointerEvent) => {
+    if (e.pointerId !== this.touchPointerId) return;
+    this.touchPointerId = null;
+    this.touchTarget = null;
+    this.touchMarker.visible = false;
   };
 
   // ============================================================
@@ -1300,13 +1364,24 @@ export class ThreeArenaEngine {
         this.camera.lookAt(lookX, -0.8, lookZ);
       }
 
-      // Poll keyboard + joystick input
+      // Poll keyboard + joystick + direct finger touch-to-steer input
       const activeTag = document.activeElement?.tagName;
       if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') {
         this.onInputCallback?.(0, 0);
       } else {
         let dx = this.joystickVec.dx;
         let dy = this.joystickVec.dy;
+        if (Math.hypot(dx, dy) < 0.08 && this.touchTarget && local && local.alive) {
+          const tx = this.touchTarget.x - local.group.position.x;
+          const tz = this.touchTarget.z - local.group.position.z;
+          const dist = Math.hypot(tx, tz);
+          if (dist > 0.35) {
+            dx = tx / dist;
+            dy = tz / dist;
+          }
+          const pulse = 1 + Math.sin(nowSec * 10) * 0.14;
+          this.touchMarker.scale.set(pulse, pulse, 1);
+        }
         if (Math.hypot(dx, dy) < 0.08) {
           let kx = 0;
           let ky = 0;
@@ -1333,6 +1408,10 @@ export class ThreeArenaEngine {
     window.removeEventListener('keydown', this.handleKeyDown);
     window.removeEventListener('keyup', this.handleKeyUp);
     window.removeEventListener('blur', this.handleBlur);
+    this.renderer.domElement.removeEventListener('pointerdown', this.handleCanvasPointerDown);
+    window.removeEventListener('pointermove', this.handleCanvasPointerMove);
+    window.removeEventListener('pointerup', this.handleCanvasPointerUp);
+    window.removeEventListener('pointercancel', this.handleCanvasPointerUp);
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
