@@ -86,8 +86,17 @@ export interface NetworkCallbacks {
 function getDefaultServerUrl(): string {
   const envUrl = import.meta.env.VITE_SERVER_URL as string | undefined;
   if (envUrl && envUrl.trim().length > 0) return envUrl.trim();
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${window.location.hostname}:2567`;
+  const host = window.location.hostname;
+  const isLocal =
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host.startsWith('192.168.') ||
+    host.startsWith('10.');
+  if (isLocal) {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${host}:2567`;
+  }
+  return 'wss://sonkisi-server.onrender.com';
 }
 
 export class NetworkManager {
