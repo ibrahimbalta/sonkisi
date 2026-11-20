@@ -1,6 +1,7 @@
 import {
   CHARACTERS,
   EliminatedPayload,
+  EliminationFeedPayload,
   FUNNY_ELIMINATION_QUIPS,
   getCharacterById,
   getLevelByNumber,
@@ -25,6 +26,7 @@ export interface UIActions {
   onJoinPrivate: (code: string) => Promise<void>;
   onStartPrivate: () => void;
   onSelectLevel: (level: number) => void;
+  onDash: () => void;
   onPlayAgain: () => Promise<void>;
   onLeaveRoom: () => Promise<void>;
   onSendEmoji: (emoji: string) => void;
@@ -84,6 +86,8 @@ export class UIManager {
   private roomLayerEl: HTMLElement | null = null;
   private joystick: VirtualJoystick | null = null;
   private lastCountdownInt = -1;
+  private lastAnnouncedLevel = -1;
+  private levelBannerTimer: number | null = null;
 
   constructor(actions: UIActions) {
     this.root = document.getElementById('ui-root')!;
@@ -123,6 +127,43 @@ export class UIManager {
     this.localSessionId = id;
   }
 
+  public pushEliminationFeed(payload: EliminationFeedPayload) {
+    const feed = document.getElementById('elim-feed');
+    if (!feed) return;
+    const c = getCharacterById(payload.avatar);
+    const item = document.createElement('div');
+    item.className = 'elim-item';
+    item.textContent = `${c.emoji} ${payload.name} uçtu! (#${payload.rank})`;
+    feed.prepend(item);
+    while (feed.children.length > 4) {
+      feed.lastElementChild?.remove();
+    }
+    setTimeout(() => {
+      item.style.opacity = '0';
+      item.style.transition = 'opacity 0.3s ease';
+      setTimeout(() => item.remove(), 320);
+    }, 3200);
+  }
+
+  public showLevelBanner(level: number) {
+    const el = document.getElementById('level-banner');
+    if (!el) return;
+    const def = getLevelByNumber(level);
+    el.innerHTML = `
+      <div class="level-banner-title">${def.icon} LEVEL ${def.level} — ${escapeHtml(def.name.toUpperCase())}</div>
+      <div class="level-banner-sub">${escapeHtml(def.description)}</div>
+    `;
+    el.style.display = 'block';
+    soundManager.playLevelUp();
+
+    if (this.levelBannerTimer !== null) {
+      window.clearTimeout(this.levelBannerTimer);
+    }
+    this.levelBannerTimer = window.setTimeout(() => {
+      el.style.display = 'none';
+    }, 2000);
+  }
+
   public enterRoomView() {
     this.viewMode = 'room';
     this.activeModal = 'none';
@@ -130,6 +171,7 @@ export class UIManager {
     this.spectating = false;
     this.winnerInfo = null;
     this.reconnecting = false;
+    this.lastAnnouncedLevel = -1;
     this.renderRoomShell();
   }
 
@@ -781,6 +823,21 @@ export class UIManager {
         <!-- EMOJI BAR -->
         <div class="emoji-bar" id="emoji-bar">${emojiButtons}</div>
 
+        <!-- DASH ACTION BUTTON -->
+        <button class="dash-btn" id="btn-dash" style="display:none;">
+          <span style="font-size:22px;">⚡</span>
+          <span id="dash-btn-label">ATIL</span>
+        </button>
+
+        <!-- ACTIVE POWER-UP BADGES -->
+        <div class="powerup-badges" id="powerup-badges"></div>
+
+        <!-- LIVE ELIMINATION FEED -->
+        <div class="elim-feed" id="elim-feed"></div>
+
+        <!-- DRAMATIC LEVEL BANNER -->
+        <div class="level-banner" id="level-banner" style="display:none;"></div>
+
         <!-- SPECTATE BAR -->
         <div class="spectate-bar" id="spectate-bar" style="display:none;">
           <span style="font-weight:900;color:var(--gold);">👀 İzleme Modu</span>
@@ -841,6 +898,10 @@ export class UIManager {
       });
     });
 
+    document.getElementById('btn-dash')?.addEventListener('click', () => {
+      this.actions.onDash();
+    });
+
     const joyBase = document.getElementById('joystick-zone');
     const joyKnob = document.getElementById('joystick-knob');
     if (joyBase && joyKnob) {
@@ -873,6 +934,37 @@ export class UIManager {
     if (specBar) {
       specBar.style.display =
         !isLobby && !amAlive && this.spectating && !this.winnerInfo ? 'flex' : 'none';
+    }
+
+    // Update Dash button & active Power-Up badges
+    const dashBtn = document.getElementById('btn-dash');
+    const dashLabel = document.getElementById('dash-btn-label');
+    if (dashBtn) {
+      const showDash = (amAlive || isLobby) && state.phase !== 'finished';
+      dashBtn.style.display = showDash ? 'flex' : 'none';
+      const cd = me?.dashCooldown ?? 0;
+      dashBtn.classList.toggle('cooldown', cd > 0.05);
+      if (dashLabel) {
+        dashLabel.textContent = cd > 0.05 ? `${cd.toFixed(1)}s` : 'ATIL';
+      }
+    }
+
+    const puBadges = document.getElementById('powerup-badges');
+    if (puBadges) {
+      const pills: string[] = [];
+      if (me?.alive && me.hasShield) {
+        pills.push('<div class="pu-pill">🛡️ BÜYÜ KALKANI AKTİF</div>');
+      }
+      if (me?.alive && me.speedBoost) {
+        pills.push('<div class="pu-pill speed">⚡ HIZ İKSİRİ AKTİF</div>');
+      }
+      puBadges.innerHTML = pills.join('');
+    }
+
+    // Announce dramatic level banner when a new round/level starts
+    if (!isLobby && state.round > 0 && state.level !== this.lastAnnouncedLevel) {
+      this.lastAnnouncedLevel = state.level;
+      this.showLevelBanner(state.level);
     }
 
     if (isLobby) {

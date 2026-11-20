@@ -1030,3 +1030,121 @@ body,
   color: #1e1b3a;
   border-color: #1e1b3a;
 }
+
+/* ================= DASH BUTTON, POWERUPS, FEED & LEVEL BANNER ================= */
+.dash-btn {
+  pointer-events: auto;
+  position: fixed;
+  right: max(18px, env(safe-area-inset-right));
+  bottom: max(76px, calc(env(safe-area-inset-bottom) + 66px));
+  width: 78px;
+  height: 78px;
+  border-radius: 50%;
+  border: 3.5px solid #1e1b3a;
+  background: linear-gradient(180deg, #00f5d4 0%, #1e90ff 100%);
+  color: #fff;
+  font-family: 'Fredoka', sans-serif;
+  font-weight: 700;
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.05;
+  cursor: pointer;
+  box-shadow: 0 6px 0 #1062b8, 0 0 24px rgba(0, 245, 212, 0.55);
+  transition: transform 0.1s ease, filter 0.15s ease;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.4);
+}
+
+.dash-btn:active {
+  transform: translateY(3px) scale(0.95);
+}
+
+.dash-btn.cooldown {
+  background: linear-gradient(180deg, #57606f 0%, #2f3542 100%);
+  box-shadow: 0 4px 0 #1e1b3a;
+  opacity: 0.78;
+  cursor: default;
+}
+
+.powerup-badges {
+  position: fixed;
+  bottom: max(18px, env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.pu-pill {
+  background: rgba(22, 16, 66, 0.92);
+  border: 2.5px solid var(--gold);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-weight: 900;
+  font-size: 13px;
+  color: var(--gold);
+  box-shadow: 0 0 18px rgba(255, 211, 42, 0.45);
+  animation: popIn 0.2s ease;
+}
+
+.pu-pill.speed {
+  border-color: #00f5d4;
+  color: #00f5d4;
+  box-shadow: 0 0 18px rgba(0, 245, 212, 0.45);
+}
+
+.elim-feed {
+  position: fixed;
+  top: max(64px, calc(env(safe-area-inset-top) + 56px));
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+  pointer-events: none;
+  max-width: 240px;
+}
+
+.elim-item {
+  background: rgba(22, 16, 66, 0.88);
+  border: 2px solid rgba(255, 71, 87, 0.65);
+  border-radius: 12px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #fff;
+  animation: popIn 0.2s ease;
+}
+
+.level-banner {
+  position: fixed;
+  top: 42%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: linear-gradient(90deg, rgba(22, 16, 66, 0.96), rgba(88, 28, 135, 0.96), rgba(22, 16, 66, 0.96));
+  border: 3px solid var(--gold);
+  border-radius: 26px;
+  padding: 16px 32px;
+  text-align: center;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.65), 0 0 36px rgba(255, 211, 42, 0.35);
+  pointer-events: none;
+  z-index: 45;
+  animation: popIn 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.level-banner-title {
+  font-family: 'Fredoka', sans-serif;
+  font-size: clamp(24px, 5vw, 34px);
+  color: var(--gold);
+  text-shadow: 0 3px 0 #1e1b3a;
+}
+
+.level-banner-sub {
+  font-size: 14px;
+  font-weight: 800;
+  color: #fff;
+  margin-top: 3px;
+}

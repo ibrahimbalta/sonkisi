@@ -1,5 +1,5 @@
 import { Room, Client } from 'colyseus';
-import { GameState, Player } from '../schema/GameState';
+import { GameState, Player, PowerUp } from '../schema/GameState';
 import {
   buildObstaclesForLevel,
   KnockbackVel,
@@ -13,6 +13,7 @@ import {
   ARENA_WIDTH,
   CHARACTERS,
   CLIENT_MESSAGES,
+  DASH_CONFIG,
   EmojiBroadcast,
   EmojiPayload,
   InputPayload,
@@ -63,6 +64,9 @@ export class SonKisiRoom extends Room<GameState> {
 
   private inputs = new Map<string, PlayerInput>();
   private knockbacks = new Map<string, KnockbackVel>();
+  private dashTimers = new Map<string, { timeLeft: number; dx: number; dy: number }>();
+  private speedBoostTimers = new Map<string, number>();
+  private shieldProtectedThisDrop = new Set<string>();
   private obstacleMotions: ObstacleMotion[] = [];
   private elapsedSec = 0;
   private lastEmojiTime = new Map<string, number>();
@@ -153,6 +157,38 @@ export class SonKisiRoom extends Room<GameState> {
       this.state.startingLevel = lv;
       this.state.level = lv;
       this.obstacleMotions = buildObstaclesForLevel(lv, this.state.obstacles);
+    });
+
+    this.onMessage(CLIENT_MESSAGES.DASH, (client) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player || !player.alive) return;
+      if (player.dashCooldown > 0.05) return;
+
+      const input = this.inputs.get(client.sessionId);
+      let dx = input?.dx ?? 0;
+      let dy = input?.dy ?? 0;
+      const len = Math.hypot(dx, dy);
+      if (len < 0.1) {
+        // Dash forward in last velocity or default upward
+        dx = 0;
+        dy = -1;
+      } else {
+        dx /= len;
+        dy /= len;
+      }
+
+      player.dashCooldown = DASH_CONFIG.COOLDOWN_SEC;
+      this.dashTimers.set(client.sessionId, {
+        timeLeft: DASH_CONFIG.DURATION_SEC,
+        dx,
+        dy,
+      });
+
+      this.broadcast(SERVER_MESSAGES.PLAYER_DASHED, {
+        sessionId: client.sessionId,
+        x: player.x,
+        y: player.y,
+      });
     });
 
     const tickMs = Math.round(1000 / ARENA_CONFIG.TICK_RATE_HZ);
@@ -313,10 +349,18 @@ export class SonKisiRoom extends Room<GameState> {
       p.alive = true;
       p.eliminatedRank = 0;
       p.roundsSurvived = 0;
+      p.hasShield = false;
+      p.speedBoost = false;
+      p.dashCooldown = 0;
       const spawn = this.getRandomSpawn();
       p.x = spawn.x;
       p.y = spawn.y;
     });
+
+    this.dashTimers.clear();
+    this.speedBoostTimers.clear();
+    this.shieldProtectedThisDrop.clear();
+    this.state.powerUps.clear();
 
     this.recountAlive();
     this.generateTiles(1);
@@ -326,13 +370,29 @@ export class SonKisiRoom extends Room<GameState> {
     this.state.phaseTimeLeft = ARENA_CONFIG.STARTING_COUNTDOWN_SEC;
   }
 
+  private spawnPowerUps() {
+    this.state.powerUps.clear();
+    const count = 3;
+    const margin = ARENA_CONFIG.TILE_SIZE * 1.4;
+    for (let i = 0; i < count; i++) {
+      const pu = new PowerUp();
+      pu.id = `pu_${this.state.round}_${i}_${Math.floor(Math.random() * 1000)}`;
+      pu.kind = i === 0 ? 'shield' : Math.random() < 0.45 ? 'shield' : 'speed';
+      pu.x = Math.round(margin + Math.random() * (ARENA_WIDTH - margin * 2));
+      pu.y = Math.round(margin + Math.random() * (ARENA_HEIGHT - margin * 2));
+      this.state.powerUps.push(pu);
+    }
+  }
+
   private startNextRound() {
     this.state.round += 1;
     const nextLevel = ((this.state.startingLevel - 1 + (this.state.round - 1)) % 10) + 1;
     this.state.level = nextLevel;
     this.obstacleMotions = buildObstaclesForLevel(nextLevel, this.state.obstacles);
     this.knockbacks.clear();
+    this.shieldProtectedThisDrop.clear();
     this.generateTiles(this.state.round);
+    this.spawnPowerUps();
 
     // Pick a random safe color that definitely exists on the board
     const safeColor = Math.floor(Math.random() * TILE_COLORS.length);
@@ -374,6 +434,13 @@ export class SonKisiRoom extends Room<GameState> {
   }
 
   private startRoundEndPhase() {
+    // Consume shields that saved players during this drop
+    this.shieldProtectedThisDrop.forEach((sid) => {
+      const p = this.state.players.get(sid);
+      if (p) p.hasShield = false;
+    });
+    this.shieldProtectedThisDrop.clear();
+
     // Award surviving players +1 round survived
     this.state.players.forEach((p) => {
       if (p.alive) {
@@ -409,10 +476,18 @@ export class SonKisiRoom extends Room<GameState> {
       p.alive = true;
       p.eliminatedRank = 0;
       p.roundsSurvived = 0;
+      p.hasShield = false;
+      p.speedBoost = false;
+      p.dashCooldown = 0;
       const spawn = this.getRandomSpawn();
       p.x = spawn.x;
       p.y = spawn.y;
     });
+
+    this.dashTimers.clear();
+    this.speedBoostTimers.clear();
+    this.shieldProtectedThisDrop.clear();
+    this.state.powerUps.clear();
 
     this.generateTiles(1);
     this.recountAlive();
@@ -499,8 +574,38 @@ export class SonKisiRoom extends Room<GameState> {
         return;
       }
       const input = this.inputs.get(player.sessionId);
-      const dx = input?.dx ?? 0;
-      const dy = input?.dy ?? 0;
+      let dx = input?.dx ?? 0;
+      let dy = input?.dy ?? 0;
+
+      // Update dash cooldown
+      if (player.dashCooldown > 0) {
+        player.dashCooldown = Math.max(0, Math.round((player.dashCooldown - dt) * 10) / 10);
+      }
+
+      // Update speed boost timer
+      const sbLeft = this.speedBoostTimers.get(player.sessionId);
+      if (sbLeft !== undefined) {
+        const nextSb = sbLeft - dt;
+        if (nextSb <= 0) {
+          this.speedBoostTimers.delete(player.sessionId);
+          player.speedBoost = false;
+        } else {
+          this.speedBoostTimers.set(player.sessionId, nextSb);
+        }
+      }
+
+      // Apply active dash velocity override
+      let speedMult = player.speedBoost ? 1.38 : 1.0;
+      const dash = this.dashTimers.get(player.sessionId);
+      if (dash) {
+        dx = dash.dx;
+        dy = dash.dy;
+        speedMult = DASH_CONFIG.SPEED_MULTIPLIER;
+        dash.timeLeft -= dt;
+        if (dash.timeLeft <= 0) {
+          this.dashTimers.delete(player.sessionId);
+        }
+      }
 
       player.vx = Math.round(dx * 100) / 100;
       player.vy = Math.round(dy * 100) / 100;
@@ -510,8 +615,8 @@ export class SonKisiRoom extends Room<GameState> {
       const kbVy = kb?.vy ?? 0;
 
       if (dx !== 0 || dy !== 0 || Math.abs(kbVx) > 2 || Math.abs(kbVy) > 2) {
-        let nx = player.x + (dx * speed + kbVx) * dt;
-        let ny = player.y + (dy * speed + kbVy) * dt;
+        let nx = player.x + (dx * speed * speedMult + kbVx) * dt;
+        let ny = player.y + (dy * speed * speedMult + kbVy) * dt;
         nx = Math.max(minX, Math.min(maxX, nx));
         ny = Math.max(minY, Math.min(maxY, ny));
         player.x = Math.round(nx * 10) / 10;
@@ -529,6 +634,27 @@ export class SonKisiRoom extends Room<GameState> {
       resolveObstacleCollisions(player, this.state.obstacles, this.knockbacks);
       player.x = Math.round(player.x * 10) / 10;
       player.y = Math.round(player.y * 10) / 10;
+
+      // Check Power-Up pickups
+      for (let i = this.state.powerUps.length - 1; i >= 0; i--) {
+        const pu = this.state.powerUps[i];
+        if (!pu) continue;
+        if (Math.hypot(player.x - pu.x, player.y - pu.y) < ARENA_CONFIG.PLAYER_RADIUS + 24) {
+          if (pu.kind === 'shield') {
+            player.hasShield = true;
+          } else {
+            player.speedBoost = true;
+            this.speedBoostTimers.set(player.sessionId, 4.5);
+          }
+          this.broadcast(SERVER_MESSAGES.POWERUP_PICKED, {
+            sessionId: player.sessionId,
+            kind: pu.kind,
+            x: pu.x,
+            y: pu.y,
+          });
+          this.state.powerUps.splice(i, 1);
+        }
+      }
 
       activePlayers.push(player);
     });
@@ -610,7 +736,12 @@ export class SonKisiRoom extends Room<GameState> {
       if (p.alive) {
         aliveBefore++;
         if (!this.isOnSafeTile(p.x, p.y)) {
-          falling.push(p);
+          if (p.hasShield) {
+            // Magic shield saves the player from falling during this drop!
+            this.shieldProtectedThisDrop.add(p.sessionId);
+          } else {
+            falling.push(p);
+          }
         }
       }
     });
@@ -648,6 +779,12 @@ export class SonKisiRoom extends Room<GameState> {
           roundsSurvived: p.roundsSurvived,
         });
       }
+
+      this.broadcast(SERVER_MESSAGES.ELIMINATION_FEED, {
+        name: p.name,
+        avatar: p.avatar,
+        rank: p.eliminatedRank,
+      });
     }
 
     this.recountAlive();

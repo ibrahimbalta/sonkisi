@@ -101,6 +101,28 @@ class SoundManager {
   playEmojiPop() {
     this.playTone(460, 0.09, 'sine', 0.16, 820);
   }
+
+  playDash() {
+    this.playTone(280, 0.16, 'triangle', 0.28, 920);
+    this.playTone(600, 0.12, 'sine', 0.14, 1200, 0.04);
+  }
+
+  playPowerUp(kind: 'speed' | 'shield') {
+    if (kind === 'shield') {
+      this.playTone(440, 0.12, 'sine', 0.25, undefined, 0);
+      this.playTone(659.25, 0.14, 'sine', 0.26, undefined, 0.08);
+      this.playTone(880, 0.22, 'triangle', 0.28, undefined, 0.16);
+    } else {
+      this.playTone(587.33, 0.1, 'triangle', 0.26, 987.77, 0);
+      this.playTone(880, 0.16, 'triangle', 0.28, 1318.5, 0.09);
+    }
+  }
+
+  playLevelUp() {
+    this.playTone(392, 0.1, 'triangle', 0.22, undefined, 0);
+    this.playTone(523.25, 0.1, 'triangle', 0.24, undefined, 0.08);
+    this.playTone(659.25, 0.18, 'triangle', 0.26, undefined, 0.16);
+  }
 }
 
 export const soundManager = new SoundManager();

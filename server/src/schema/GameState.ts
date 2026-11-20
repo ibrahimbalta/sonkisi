@@ -13,6 +13,16 @@ export class Player extends Schema {
   @type('number') eliminatedRank: number = 0;
   @type('number') roundsSurvived: number = 0;
   @type('boolean') connected: boolean = true;
+  @type('boolean') hasShield: boolean = false;
+  @type('boolean') speedBoost: boolean = false;
+  @type('number') dashCooldown: number = 0;
+}
+
+export class PowerUp extends Schema {
+  @type('string') id: string = '';
+  @type('string') kind: string = 'speed'; // 'speed' | 'shield'
+  @type('number') x: number = 0;
+  @type('number') y: number = 0;
 }
 
 export class Obstacle extends Schema {
@@ -46,5 +56,6 @@ export class GameState extends Schema {
   @type('string') winnerAvatar: string = '';
   @type(['int8']) tiles = new ArraySchema<number>();
   @type([Obstacle]) obstacles = new ArraySchema<Obstacle>();
+  @type([PowerUp]) powerUps = new ArraySchema<PowerUp>();
   @type({ map: Player }) players = new MapSchema<Player>();
 }

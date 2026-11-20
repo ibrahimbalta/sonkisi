@@ -2,9 +2,12 @@ import { Client, Room } from 'colyseus.js';
 import {
   CLIENT_MESSAGES,
   EliminatedPayload,
+  EliminationFeedPayload,
   EmojiBroadcast,
   GamePhase,
   MatchWinnerPayload,
+  PowerUpKind,
+  PowerUpPickedPayload,
   SERVER_MESSAGES,
 } from '../../../shared/src/index';
 
@@ -20,6 +23,16 @@ export interface PlayerSnapshot {
   eliminatedRank: number;
   roundsSurvived: number;
   connected: boolean;
+  hasShield: boolean;
+  speedBoost: boolean;
+  dashCooldown: number;
+}
+
+export interface PowerUpSnapshot {
+  id: string;
+  kind: PowerUpKind;
+  x: number;
+  y: number;
 }
 
 export interface ObstacleSnapshot {
@@ -53,6 +66,7 @@ export interface RoomStateSnapshot {
   winnerAvatar: string;
   tiles: number[];
   obstacles: ObstacleSnapshot[];
+  powerUps: PowerUpSnapshot[];
   players: Map<string, PlayerSnapshot>;
 }
 
@@ -61,6 +75,9 @@ export interface NetworkCallbacks {
   onEliminated: (payload: EliminatedPayload) => void;
   onMatchWinner: (payload: MatchWinnerPayload) => void;
   onEmoji: (payload: EmojiBroadcast) => void;
+  onPlayerDashed?: (payload: { sessionId: string; x: number; y: number }) => void;
+  onPowerUpPicked?: (payload: PowerUpPickedPayload) => void;
+  onEliminationFeed?: (payload: EliminationFeedPayload) => void;
   onDisconnected: (reconnecting: boolean) => void;
   onReconnected: () => void;
   onRoomLeft: (reason?: string) => void;
@@ -197,6 +214,11 @@ export class NetworkManager {
     this.room.send(CLIENT_MESSAGES.SELECT_LEVEL, { level });
   }
 
+  sendDash() {
+    if (!this.room) return;
+    this.room.send(CLIENT_MESSAGES.DASH);
+  }
+
   private attachRoom(room: Room) {
     this.room = room;
     this.reconnectionToken = room.reconnectionToken;
@@ -217,6 +239,24 @@ export class NetworkManager {
     room.onMessage(SERVER_MESSAGES.EMOJI, (payload: EmojiBroadcast) => {
       this.callbacks.onEmoji(payload);
     });
+
+    room.onMessage(
+      SERVER_MESSAGES.PLAYER_DASHED,
+      (payload: { sessionId: string; x: number; y: number }) => {
+        this.callbacks.onPlayerDashed?.(payload);
+      }
+    );
+
+    room.onMessage(SERVER_MESSAGES.POWERUP_PICKED, (payload: PowerUpPickedPayload) => {
+      this.callbacks.onPowerUpPicked?.(payload);
+    });
+
+    room.onMessage(
+      SERVER_MESSAGES.ELIMINATION_FEED,
+      (payload: EliminationFeedPayload) => {
+        this.callbacks.onEliminationFeed?.(payload);
+      }
+    );
 
     room.onLeave(async (code) => {
       if (this.intentionalLeave) {
@@ -264,6 +304,9 @@ export class NetworkManager {
           eliminatedRank: Number(p.eliminatedRank ?? 0),
           roundsSurvived: Number(p.roundsSurvived ?? 0),
           connected: Boolean(p.connected),
+          hasShield: Boolean(p.hasShield),
+          speedBoost: Boolean(p.speedBoost),
+          dashCooldown: Number(p.dashCooldown ?? 0),
         });
       });
     }
@@ -292,6 +335,19 @@ export class NetworkManager {
       }
     }
 
+    const powerUps: PowerUpSnapshot[] = [];
+    if (raw.powerUps && typeof raw.powerUps.length === 'number') {
+      for (let i = 0; i < raw.powerUps.length; i++) {
+        const pu = raw.powerUps[i];
+        powerUps.push({
+          id: String(pu.id ?? `pu_${i}`),
+          kind: (pu.kind === 'shield' ? 'shield' : 'speed') as PowerUpKind,
+          x: Number(pu.x ?? 0),
+          y: Number(pu.y ?? 0),
+        });
+      }
+    }
+
     return {
       phase: (raw.phase ?? 'lobby') as GamePhase,
       roomCode: String(raw.roomCode ?? ''),
@@ -312,6 +368,7 @@ export class NetworkManager {
       winnerAvatar: String(raw.winnerAvatar ?? ''),
       tiles,
       obstacles,
+      powerUps,
       players,
     };
   }

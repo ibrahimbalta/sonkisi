@@ -124,6 +124,24 @@ function createEmojiSprite(emoji: string): THREE.Sprite {
   return sprite;
 }
 
+const shieldBubbleGeo = new THREE.SphereGeometry(1.12, 18, 14);
+const shieldBubbleMat = new THREE.MeshStandardMaterial({
+  color: 0xffd32a,
+  emissive: 0xffb300,
+  emissiveIntensity: 0.5,
+  transparent: true,
+  opacity: 0.28,
+  roughness: 0.1,
+  metalness: 0.2,
+  depthWrite: false,
+});
+const speedAuraMat = new THREE.MeshBasicMaterial({
+  color: 0x00f5d4,
+  side: THREE.DoubleSide,
+  transparent: true,
+  opacity: 0.78,
+});
+
 export class ThreeCharacter {
   public group: THREE.Group;
   public targetX: number;
@@ -139,6 +157,8 @@ export class ThreeCharacter {
   private rightWing: THREE.Object3D | null = null;
   private floatingOrb: THREE.Object3D | null = null;
   private localRing: THREE.Mesh | null = null;
+  private shieldBubble: THREE.Mesh;
+  private speedAura: THREE.Mesh;
   private nameSprite: THREE.Sprite;
   private emojiSprite: THREE.Sprite | null = null;
   private emojiLife = 0;
@@ -167,6 +187,19 @@ export class ThreeCharacter {
       this.localRing.position.y = 0.05;
       this.group.add(this.localRing);
     }
+
+    // Magic Shield bubble & Speed Boost aura (toggled by server state)
+    this.shieldBubble = new THREE.Mesh(shieldBubbleGeo, shieldBubbleMat);
+    this.shieldBubble.position.y = 0.95;
+    this.shieldBubble.visible = false;
+    this.group.add(this.shieldBubble);
+
+    this.speedAura = new THREE.Mesh(ringGeo, speedAuraMat);
+    this.speedAura.rotation.x = -Math.PI / 2;
+    this.speedAura.position.y = 0.09;
+    this.speedAura.scale.setScalar(1.22);
+    this.speedAura.visible = false;
+    this.group.add(this.speedAura);
 
     this.bodyPivot = new THREE.Group();
     this.bodyPivot.scale.setScalar(CHARACTER_SCALE);
@@ -499,6 +532,11 @@ export class ThreeCharacter {
     }
   }
 
+  public setEffects(hasShield: boolean, speedBoost: boolean) {
+    this.shieldBubble.visible = hasShield && this.alive;
+    this.speedAura.visible = speedBoost && this.alive;
+  }
+
   public setWinnerCrown(show: boolean) {
     if (show && !this.crownMesh) {
       const g = new THREE.Group();
@@ -604,6 +642,14 @@ export class ThreeCharacter {
     if (this.localRing) {
       const s = 1 + Math.sin(nowSec * 5) * 0.08;
       this.localRing.scale.set(s, s, 1);
+    }
+    if (this.shieldBubble.visible) {
+      this.shieldBubble.rotation.y += dt * 1.6;
+      const bs = 1 + Math.sin(nowSec * 6) * 0.04;
+      this.shieldBubble.scale.setScalar(bs);
+    }
+    if (this.speedAura.visible) {
+      this.speedAura.rotation.z += dt * 5;
     }
   }
 

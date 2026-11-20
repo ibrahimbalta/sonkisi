@@ -8,7 +8,11 @@ import {
   getTileColorById,
   TILE_COLORS,
 } from '../../../shared/src/index';
-import { ObstacleSnapshot, RoomStateSnapshot } from '../services/NetworkManager';
+import {
+  ObstacleSnapshot,
+  PowerUpSnapshot,
+  RoomStateSnapshot,
+} from '../services/NetworkManager';
 import { soundManager } from '../audio/SoundManager';
 import { ThreeCharacter } from './ThreeCharacter';
 
@@ -145,6 +149,9 @@ export class ThreeArenaEngine {
   private tiles: Tile3D[] = [];
   private players = new Map<string, ThreeCharacter>();
   private obstacles = new Map<string, Obstacle3D>();
+  private powerUps = new Map<string, THREE.Group>();
+  private shockwaves: { mesh: THREE.Mesh; life: number; maxLife: number }[] = [];
+  private cameraShake = 0;
 
   // Biome-reactive materials
   private skyMat!: THREE.ShaderMaterial;
@@ -543,6 +550,7 @@ export class ThreeArenaEngine {
     this.players.forEach((p) => p.dispose(this.scene));
     this.players.clear();
     this.clearObstacles();
+    this.clearPowerUps();
     this.applyLevelBiome(1);
 
     // Restore tiles for ambient menu orbit
@@ -555,6 +563,72 @@ export class ThreeArenaEngine {
   private clearObstacles() {
     this.obstacles.forEach((o) => this.scene.remove(o.group));
     this.obstacles.clear();
+  }
+
+  private clearPowerUps() {
+    this.powerUps.forEach((g) => this.scene.remove(g));
+    this.powerUps.clear();
+  }
+
+  private syncPowerUps(list: PowerUpSnapshot[]) {
+    const seen = new Set<string>();
+    for (const pu of list) {
+      seen.add(pu.id);
+      if (!this.powerUps.has(pu.id)) {
+        const g = new THREE.Group();
+        const pos = this.serverToWorld(pu.x, pu.y);
+        g.position.set(pos.x, 1.05, pos.z);
+
+        const color = pu.kind === 'shield' ? 0xffd32a : 0x00f5d4;
+        const crystal = new THREE.Mesh(
+          new THREE.OctahedronGeometry(0.55, 0),
+          new THREE.MeshStandardMaterial({
+            color,
+            emissive: color,
+            emissiveIntensity: 0.9,
+            roughness: 0.12,
+            metalness: 0.25,
+          })
+        );
+        crystal.scale.set(0.85, 1.25, 0.85);
+        g.add(crystal);
+
+        const ring = new THREE.Mesh(
+          new THREE.TorusGeometry(0.75, 0.06, 8, 24),
+          new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.75 })
+        );
+        ring.rotation.x = Math.PI / 2;
+        g.add(ring);
+
+        this.scene.add(g);
+        this.powerUps.set(pu.id, g);
+      }
+    }
+    this.powerUps.forEach((g, id) => {
+      if (!seen.has(id)) {
+        this.scene.remove(g);
+        this.powerUps.delete(id);
+      }
+    });
+  }
+
+  public spawnShockwave(serverX: number, serverY: number, colorHex: number, shake = 0) {
+    const pos = this.serverToWorld(serverX, serverY);
+    const mat = new THREE.MeshBasicMaterial({
+      color: colorHex,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(new THREE.RingGeometry(0.35, 0.65, 28), mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(pos.x, 0.14, pos.z);
+    this.scene.add(mesh);
+    this.shockwaves.push({ mesh, life: 0.45, maxLife: 0.45 });
+    if (shake > 0) {
+      this.cameraShake = Math.max(this.cameraShake, shake);
+    }
   }
 
   private applyLevelBiome(level: number) {
@@ -729,6 +803,12 @@ export class ThreeArenaEngine {
       this.applyLevelBiome(state.level);
     }
     this.syncObstacles(state.obstacles ?? []);
+    this.syncPowerUps(state.powerUps ?? []);
+
+    // Trigger dramatic camera shake when tiles drop!
+    if (prevPhase !== 'drop' && state.phase === 'drop') {
+      this.cameraShake = 0.55;
+    }
 
     // Audio cues on phase transitions
     if (prevPhase !== state.phase) {
@@ -801,8 +881,10 @@ export class ThreeArenaEngine {
 
       const wasAlive = char.alive;
       char.setTarget(pos.x, pos.z, p.vx, p.vy, p.alive);
+      char.setEffects(p.hasShield, p.speedBoost);
       if (wasAlive && !p.alive && id === this.localSessionId) {
         soundManager.playFall();
+        this.cameraShake = 0.7;
       }
 
       char.setWinnerCrown(state.phase === 'finished' && state.winnerSessionId === id);
@@ -1006,6 +1088,28 @@ export class ThreeArenaEngine {
         }
       });
 
+      // Animate floating 3D Power-Up crystals
+      this.powerUps.forEach((g) => {
+        g.rotation.y += dt * 2.4;
+        g.position.y = 1.05 + Math.sin(nowSec * 3.8 + g.position.x) * 0.24;
+      });
+
+      // Animate expanding 3D shockwave rings
+      for (let i = this.shockwaves.length - 1; i >= 0; i--) {
+        const sw = this.shockwaves[i];
+        sw.life -= dt;
+        const progress = 1 - Math.max(0, sw.life / sw.maxLife);
+        const s = 1 + progress * 4.2;
+        sw.mesh.scale.set(s, s, 1);
+        (sw.mesh.material as THREE.MeshBasicMaterial).opacity = (1 - progress) * 0.85;
+        if (sw.life <= 0) {
+          this.scene.remove(sw.mesh);
+          sw.mesh.geometry.dispose();
+          (sw.mesh.material as THREE.Material).dispose();
+          this.shockwaves.splice(i, 1);
+        }
+      }
+
       // Responsive 3D camera framing
       const isPortrait = window.innerWidth < 760 && window.innerHeight > window.innerWidth;
       const local = this.players.get(this.localSessionId);
@@ -1033,6 +1137,14 @@ export class ThreeArenaEngine {
       this.camera.position.x += (targetCamX - this.camera.position.x) * camLerp;
       this.camera.position.y += (targetCamY - this.camera.position.y) * camLerp;
       this.camera.position.z += (targetCamZ - this.camera.position.z) * camLerp;
+
+      if (this.cameraShake > 0.01) {
+        this.camera.position.x += (Math.random() - 0.5) * this.cameraShake;
+        this.camera.position.y += (Math.random() - 0.5) * this.cameraShake;
+        this.cameraShake *= Math.pow(0.015, dt);
+      } else {
+        this.cameraShake = 0;
+      }
 
       const lookX = isPortrait ? focusX * 0.55 : focusX * 0.15;
       const lookZ = isPortrait ? focusZ * 0.55 + 0.5 : focusZ * 0.15 + 1.2;

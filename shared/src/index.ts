@@ -272,6 +272,15 @@ export const CLIENT_MESSAGES = {
   START_PRIVATE: 'start_private',
   PLAY_AGAIN: 'play_again',
   SELECT_LEVEL: 'select_level',
+  DASH: 'dash',
+} as const;
+
+export type PowerUpKind = 'speed' | 'shield';
+
+export const DASH_CONFIG = {
+  COOLDOWN_SEC: 3.5,
+  DURATION_SEC: 0.24,
+  SPEED_MULTIPLIER: 2.35,
 } as const;
 
 export type ObstacleKind = 'pillar' | 'bumper' | 'slider' | 'orbiter' | 'sweeper';
@@ -423,7 +432,23 @@ export const SERVER_MESSAGES = {
   EMOJI: 'emoji',
   ROOM_INFO: 'room_info',
   ERROR_TOAST: 'error_toast',
+  PLAYER_DASHED: 'player_dashed',
+  POWERUP_PICKED: 'powerup_picked',
+  ELIMINATION_FEED: 'elimination_feed',
 } as const;
+
+export interface EliminationFeedPayload {
+  name: string;
+  avatar: string;
+  rank: number;
+}
+
+export interface PowerUpPickedPayload {
+  sessionId: string;
+  kind: PowerUpKind;
+  x: number;
+  y: number;
+}
 
 export interface InputPayload {
   dx: number;

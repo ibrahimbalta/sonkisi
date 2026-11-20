@@ -79,6 +79,10 @@ async function bootstrap() {
       network.sendSelectLevel(level);
     },
 
+    onDash: () => {
+      network.sendDash();
+    },
+
     onPlayAgain: async () => {
       confetti.stop();
       if (
@@ -174,6 +178,29 @@ async function bootstrap() {
       phaser.showEmoji(payload.sessionId, payload.emoji);
     },
 
+    onPlayerDashed: (payload) => {
+      const isMe = payload.sessionId === network.sessionId;
+      phaser.spawnShockwave(payload.x, payload.y, 0x00f5d4, isMe ? 0.28 : 0);
+      if (isMe) soundManager.playDash();
+    },
+
+    onPowerUpPicked: (payload) => {
+      const color = payload.kind === 'shield' ? 0xffd32a : 0x00f5d4;
+      phaser.spawnShockwave(payload.x, payload.y, color, payload.sessionId === network.sessionId ? 0.2 : 0);
+      if (payload.sessionId === network.sessionId) {
+        soundManager.playPowerUp(payload.kind);
+        ui.showToast(
+          payload.kind === 'shield'
+            ? '🛡️ Büyü Kalkanı! 1 kez düşmekten kurtulursun!'
+            : '⚡ Hız İksiri! 4.5 saniye süper hız!'
+        );
+      }
+    },
+
+    onEliminationFeed: (payload) => {
+      ui.pushEliminationFeed(payload);
+    },
+
     onDisconnected: (reconnecting) => {
       ui.setReconnecting(reconnecting);
     },
@@ -199,11 +226,16 @@ async function bootstrap() {
     }
   });
 
-  // Keyboard shortcuts 1-6 for quick emojis
+  // Keyboard shortcuts: Space/Shift for Dash, 1-6 for quick emojis
   window.addEventListener('keydown', (e) => {
     if (!network.isConnected) return;
     const tag = document.activeElement?.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    if (e.code === 'Space' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+      e.preventDefault();
+      network.sendDash();
+      return;
+    }
     const idx = parseInt(e.key, 10) - 1;
     if (idx >= 0 && idx < REACTION_EMOJIS.length) {
       network.sendEmoji(REACTION_EMOJIS[idx]);
