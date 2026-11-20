@@ -21,6 +21,7 @@ export class Player extends Schema {
   @type('boolean') hasBomb: boolean = false;
   @type('number') lives: number = 3;
   @type('number') kills: number = 0;
+  @type('number') treasuresFound: number = 0;
   @type('number') score: number = 0;
   @type('number') dashCooldown: number = 0;
 }
@@ -62,6 +63,13 @@ export class GameState extends Schema {
   @type('number') matchTimeSec: number = 0;
   @type('number') shrinkStage: number = 0;
   @type('boolean') finalDuel: boolean = false;
+  @type('number') treasureRound: number = 0;
+  @type('number') totalTreasures: number = 7;
+  @type('string') clueColExpr: string = '';
+  @type('string') clueRowExpr: string = '';
+  @type('number') clueColorId: number = -1;
+  @type('string') clueLabel: string = '';
+  @type('number') clueTimeLeft: number = 0;
   @type('string') disaster: string = 'none';
   @type('number') windX: number = 0;
   @type('number') windY: number = 0;

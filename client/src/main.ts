@@ -273,6 +273,23 @@ async function bootstrap() {
       }
     },
 
+    onTreasureFound: (payload) => {
+      phaser.spawnTreasureChest(payload.x, payload.y);
+      const isMe = payload.finderSessionId === network.sessionId;
+      if (isMe) {
+        confetti.burst();
+        soundManager.playVictory();
+        ui.showToast(
+          `💎 HARİKA! ${payload.treasureNumber}. Hazineyi buldun! (+${payload.points} PUAN)`
+        );
+      } else {
+        soundManager.playPowerUp('shield');
+        ui.showToast(
+          `💎 ${payload.finderName}, ${payload.treasureNumber}. Hazineyi kaptı! (+${payload.points} PUAN)`
+        );
+      }
+    },
+
     onDisconnected: (reconnecting) => {
       ui.setReconnecting(reconnecting);
     },

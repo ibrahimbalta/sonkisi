@@ -1243,6 +1243,84 @@ body,
   background: rgba(255, 211, 42, 0.16);
 }
 
+/* ================= TREASURE MAP PARCHMENT POPUP ================= */
+.treasure-map-popup {
+  pointer-events: auto;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(90vw, 370px);
+  background: linear-gradient(180deg, #fff3cf 0%, #f5d796 100%);
+  color: #2c1b0e;
+  border: 4px solid #8b5a2b;
+  border-radius: 26px;
+  padding: 18px 20px;
+  text-align: center;
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.72), 0 0 36px rgba(255, 211, 42, 0.55);
+  z-index: 50;
+  animation: popIn 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+  cursor: pointer;
+}
+
+.tmap-header {
+  font-family: 'Fredoka', sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  color: #7c2d12;
+  margin-bottom: 10px;
+}
+
+.tmap-eq-box {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.tmap-eq {
+  background: rgba(255, 255, 255, 0.75);
+  border: 2.5px solid #8b5a2b;
+  border-radius: 14px;
+  padding: 10px 8px;
+}
+
+.tmap-eq-lbl {
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #6b4226;
+}
+
+.tmap-eq-val {
+  font-family: 'Fredoka', sans-serif;
+  font-size: 24px;
+  font-weight: 700;
+  color: #1e1b3a;
+  margin-top: 2px;
+}
+
+.tmap-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #1e1b3a;
+  color: #fff;
+  padding: 5px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.tmap-tap {
+  margin-top: 8px;
+  font-size: 11px;
+  font-weight: 800;
+  color: #7c2d12;
+  opacity: 0.8;
+}
+
 .powerup-badges {
   position: fixed;
   bottom: max(18px, env(safe-area-inset-bottom));

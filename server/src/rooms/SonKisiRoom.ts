@@ -8,6 +8,7 @@ import {
   updateObstacles,
 } from './LevelObstacles';
 import { isTileActiveInLevel } from './LevelShapes';
+import { generateTreasureClue, MathClue } from './MathTreasure';
 import {
   ARENA_CONFIG,
   ARENA_HEIGHT,
@@ -86,12 +87,14 @@ export class SonKisiRoom extends Room<GameState> {
   private phaseTimer = 0;
   private isSoloPractice = false;
 
-  // Survival mode timers
+  // Survival & Treasure Hunt timers
   private lastSurvivalPointBucket = 0;
   private nextEventAtSec = SURVIVAL_CONFIG.EVENT_INTERVAL_SEC;
   private eventEndAtSec = 0;
   private meteorSpawnTimer = 0;
   private powerUpSpawnTimer = 4;
+  private secretTreasure: MathClue | null = null;
+  private nextTreasureDelay = 0;
 
   onCreate(options: JoinOptions) {
     this.setState(new GameState());
@@ -442,6 +445,15 @@ export class SonKisiRoom extends Room<GameState> {
     this.nextEventAtSec = SURVIVAL_CONFIG.EVENT_INTERVAL_SEC;
     this.eventEndAtSec = 0;
     this.powerUpSpawnTimer = 3.0;
+    this.secretTreasure = null;
+    this.nextTreasureDelay = 0;
+    this.state.treasureRound = 0;
+    this.state.totalTreasures = 7;
+    this.state.clueColExpr = '';
+    this.state.clueRowExpr = '';
+    this.state.clueColorId = -1;
+    this.state.clueLabel = '';
+    this.state.clueTimeLeft = 0;
 
     this.generateTiles();
     // Level 1 uses the iconic Jump-Sweeper + 4 bumpers (Level 3+ use their own unique obstacles)
@@ -459,6 +471,7 @@ export class SonKisiRoom extends Room<GameState> {
       p.hasPushPower = false;
       p.hasBomb = false;
       p.kills = 0;
+      p.treasuresFound = 0;
       p.score = 0;
       p.dashCooldown = 0;
       p.z = 0;
@@ -475,6 +488,147 @@ export class SonKisiRoom extends Room<GameState> {
     this.state.phaseTimeLeft = ARENA_CONFIG.STARTING_COUNTDOWN_SEC;
   }
 
+  private spawnNextTreasure() {
+    if (this.state.treasureRound >= this.state.totalTreasures) {
+      this.finishByHighestScore();
+      return;
+    }
+
+    this.state.treasureRound += 1;
+    const clue = generateTreasureClue(this.state.treasureRound, this.state.totalTreasures);
+    // Ensure the secret tile is solid (restore it if outer ring shrank over it)
+    const idx = clue.targetRow * ARENA_CONFIG.GRID_COLS + clue.targetCol;
+    const rawVal = this.state.tiles[idx];
+    let colorId = 0;
+    if (rawVal === undefined || rawVal < 0) {
+      colorId = Math.floor(Math.random() * TILE_COLORS.length);
+      this.state.tiles[idx] = colorId;
+    } else {
+      colorId = rawVal >= 20 ? rawVal - 20 : rawVal >= 10 ? rawVal - 10 : rawVal;
+    }
+
+    this.secretTreasure = clue;
+    this.state.clueColExpr = clue.colExpr;
+    this.state.clueRowExpr = clue.rowExpr;
+    this.state.clueColorId = colorId;
+    this.state.clueLabel = clue.difficultyLabel;
+    this.state.clueTimeLeft = 28;
+  }
+
+  private updateTreasureHunt(dt: number) {
+    if (this.nextTreasureDelay > 0) {
+      this.nextTreasureDelay -= dt;
+      if (this.nextTreasureDelay <= 0) {
+        this.spawnNextTreasure();
+      }
+      return;
+    }
+
+    if (!this.secretTreasure) return;
+
+    this.state.clueTimeLeft = Math.max(
+      0,
+      Math.round((this.state.clueTimeLeft - dt) * 10) / 10
+    );
+
+    const tileSize = ARENA_CONFIG.TILE_SIZE;
+    const targetX = this.secretTreasure.targetCol * tileSize + tileSize / 2;
+    const targetY = this.secretTreasure.targetRow * tileSize + tileSize / 2;
+
+    // Check if any grounded alive player found the hidden treasure tile!
+    let finder: Player | null = null;
+    this.state.players.forEach((p) => {
+      if (finder || !p.alive || p.z > 0.3) return;
+      const col = Math.floor(p.x / tileSize);
+      const row = Math.floor(p.y / tileSize);
+      if (
+        col === this.secretTreasure!.targetCol &&
+        row === this.secretTreasure!.targetRow
+      ) {
+        finder = p;
+      }
+    });
+
+    if (finder) {
+      const f = finder as Player;
+      const pts = this.secretTreasure.rewardPoints;
+      f.score += pts;
+      f.treasuresFound += 1;
+
+      this.broadcast(SERVER_MESSAGES.TREASURE_FOUND, {
+        finderSessionId: f.sessionId,
+        finderName: f.name,
+        finderAvatar: f.avatar,
+        col: this.secretTreasure.targetCol,
+        row: this.secretTreasure.targetRow,
+        x: targetX,
+        y: targetY,
+        points: pts,
+        treasureNumber: this.state.treasureRound,
+        totalTreasures: this.state.totalTreasures,
+      });
+
+      this.secretTreasure = null;
+      this.state.clueColExpr = '';
+      this.state.clueRowExpr = '';
+      this.state.clueColorId = -1;
+      this.nextTreasureDelay = 2.1;
+      return;
+    }
+
+    // If 28s expires with no finder, reveal and move to next treasure map!
+    if (this.state.clueTimeLeft <= 0) {
+      this.secretTreasure = null;
+      this.nextTreasureDelay = 1.0;
+    }
+  }
+
+  private finishByHighestScore() {
+    if (this.state.phase === 'finished') return;
+    this.state.phase = 'finished';
+    this.clearElectricTiles();
+    this.state.disaster = 'none';
+
+    const all = Array.from(this.state.players.values());
+    all.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (b.treasuresFound !== a.treasuresFound) return b.treasuresFound - a.treasuresFound;
+      return (a.alive ? 0 : 1) - (b.alive ? 0 : 1);
+    });
+
+    const champ = all[0];
+    if (champ) {
+      champ.eliminatedRank = 1;
+      champ.score += SURVIVAL_CONFIG.POINTS_FIRST;
+      if (all[1]) all[1].score += SURVIVAL_CONFIG.POINTS_SECOND;
+      if (all[2]) all[2].score += SURVIVAL_CONFIG.POINTS_THIRD;
+
+      this.state.winnerSessionId = champ.sessionId;
+      this.state.winnerName = champ.name;
+      this.state.winnerAvatar = champ.avatar;
+
+      const podium: PodiumEntry[] = all.slice(0, 3).map((p, idx) => ({
+        rank: idx + 1,
+        sessionId: p.sessionId,
+        name: p.name,
+        avatar: p.avatar,
+        score: p.score,
+        kills: p.kills,
+      }));
+
+      this.broadcast(SERVER_MESSAGES.MATCH_WINNER, {
+        winnerSessionId: champ.sessionId,
+        winnerName: champ.name,
+        winnerAvatar: champ.avatar,
+        pointsAwarded: champ.score,
+        totalPlayers: this.state.totalMatchPlayers,
+        roundsPlayed: this.state.treasureRound,
+        matchDurationSec: Math.floor(this.state.matchTimeSec),
+        podium,
+      });
+    }
+  }
+
   private beginSurvivalMatch() {
     this.state.phase = 'scramble';
     this.state.matchTimeSec = 0;
@@ -482,6 +636,7 @@ export class SonKisiRoom extends Room<GameState> {
     this.state.phaseDuration = 0;
     this.spawnPowerUp();
     this.spawnPowerUp();
+    this.spawnNextTreasure();
   }
 
   private resetToLobby() {
@@ -795,6 +950,7 @@ export class SonKisiRoom extends Room<GameState> {
       }
 
       this.updateCrackingTiles(dt);
+      this.updateTreasureHunt(dt);
       this.evaluateFalls();
       return;
     }

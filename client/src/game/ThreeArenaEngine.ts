@@ -155,6 +155,7 @@ export class ThreeArenaEngine {
   private powerUps = new Map<string, THREE.Group>();
   private meteors = new Map<string, { group: THREE.Group; rock: THREE.Mesh; ring: THREE.Mesh }>();
   private shockwaves: { mesh: THREE.Mesh; life: number; maxLife: number }[] = [];
+  private treasureChests: { group: THREE.Group; life: number }[] = [];
   private cameraShake = 0;
   private matchIntroTimer = 0;
   private currentDisaster = 'none';
@@ -391,6 +392,52 @@ export class ThreeArenaEngine {
     }
 
     this.scene.add(frameGroup);
+    this.buildCoordinateLabels();
+  }
+
+  private createCoordSprite(text: string, bgHex: string, textHex: string): THREE.Sprite {
+    const c = document.createElement('canvas');
+    c.width = 128;
+    c.height = 128;
+    const ctx = c.getContext('2d')!;
+    ctx.fillStyle = bgHex;
+    ctx.beginPath();
+    ctx.roundRect(14, 14, 100, 100, 26);
+    ctx.fill();
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = '#1E1B3A';
+    ctx.stroke();
+
+    ctx.font = '900 62px Fredoka, sans-serif';
+    ctx.fillStyle = textHex;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, 64, 68);
+
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+    const sp = new THREE.Sprite(mat);
+    sp.scale.set(1.25, 1.25, 1);
+    return sp;
+  }
+
+  private buildCoordinateLabels() {
+    const half = WORLD_SIZE / 2;
+    // Top edge: Columns 1..12 (Gold badges -> SÜTUN)
+    for (let col = 0; col < ARENA_CONFIG.GRID_COLS; col++) {
+      const bx = -half + col * TILE_UNIT + TILE_UNIT / 2;
+      const sp = this.createCoordSprite(String(col + 1), '#FFD32A', '#1E1B3A');
+      sp.position.set(bx, 0.9, -(half + 1.0));
+      this.scene.add(sp);
+    }
+    // Left edge: Rows 1..12 (Cyan badges -> SATIR)
+    for (let row = 0; row < ARENA_CONFIG.GRID_ROWS; row++) {
+      const bz = -half + row * TILE_UNIT + TILE_UNIT / 2;
+      const sp = this.createCoordSprite(String(row + 1), '#00F5D4', '#1E1B3A');
+      sp.position.set(-(half + 1.0), 0.9, bz);
+      this.scene.add(sp);
+    }
   }
 
   private buildTileGrid() {
@@ -746,6 +793,44 @@ export class ThreeArenaEngine {
     if (shake > 0) {
       this.cameraShake = Math.max(this.cameraShake, shake);
     }
+  }
+
+  public spawnTreasureChest(serverX: number, serverY: number) {
+    const pos = this.serverToWorld(serverX, serverY);
+    const g = new THREE.Group();
+    g.position.set(pos.x, 0.4, pos.z);
+
+    const woodMat = new THREE.MeshStandardMaterial({
+      color: 0x8b4513,
+      roughness: 0.45,
+    });
+    const goldMat = new THREE.MeshStandardMaterial({
+      color: 0xffd32a,
+      emissive: 0xffa502,
+      emissiveIntensity: 0.85,
+      metalness: 0.8,
+      roughness: 0.2,
+    });
+
+    const base = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.9, 1.05), woodMat);
+    base.position.y = 0.45;
+    const lid = new THREE.Mesh(new THREE.BoxGeometry(1.58, 0.36, 1.12), goldMat);
+    lid.position.set(0, 1.05, -0.15);
+    lid.rotation.x = -0.45; // Popped open!
+    const gem = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.45, 0),
+      new THREE.MeshStandardMaterial({
+        color: 0x00f5d4,
+        emissive: 0x00f5d4,
+        emissiveIntensity: 1.4,
+      })
+    );
+    gem.position.y = 1.2;
+
+    g.add(base, lid, gem);
+    this.scene.add(g);
+    this.treasureChests.push({ group: g, life: 2.0 });
+    this.spawnShockwave(serverX, serverY, 0xffd32a, 0.45);
   }
 
   private applyLevelBiome(level: number) {
@@ -1304,6 +1389,20 @@ export class ThreeArenaEngine {
           sw.mesh.geometry.dispose();
           (sw.mesh.material as THREE.Material).dispose();
           this.shockwaves.splice(i, 1);
+        }
+      }
+
+      // Animate erupting 3D Treasure Chests!
+      for (let i = this.treasureChests.length - 1; i >= 0; i--) {
+        const tc = this.treasureChests[i];
+        tc.life -= dt;
+        tc.group.rotation.y += dt * 3.5;
+        tc.group.position.y += dt * 1.1;
+        const s = tc.life < 0.4 ? Math.max(0.01, tc.life / 0.4) : 1.15;
+        tc.group.scale.setScalar(s);
+        if (tc.life <= 0) {
+          this.scene.remove(tc.group);
+          this.treasureChests.splice(i, 1);
         }
       }
 

@@ -90,8 +90,10 @@ export class UIManager {
   private joystick: VirtualJoystick | null = null;
   private lastCountdownInt = -1;
   private lastAnnouncedLevel = -1;
+  private lastTreasureRound = 0;
   private lastKnownLives = 3;
   private levelBannerTimer: number | null = null;
+  private treasureMapTimer: number | null = null;
 
   constructor(actions: UIActions) {
     this.root = document.getElementById('ui-root')!;
@@ -204,6 +206,7 @@ export class UIManager {
     this.winnerInfo = null;
     this.reconnecting = false;
     this.lastAnnouncedLevel = -1;
+    this.lastTreasureRound = 0;
     this.renderRoomShell();
   }
 
@@ -312,9 +315,9 @@ export class UIManager {
 
         <div class="menu-center">
           <div class="logo-wrap">
-            <span class="logo-crown">👑</span>
+            <span class="logo-crown">🗺️</span>
             <h1 class="logo-title">SON KİŞİ</h1>
-            <div class="logo-slogan">Herkes elenir, bir kişi kazanır!</div>
+            <div class="logo-slogan">Matematikle Hazineyi Bul, Rakiplerini İt! 💎</div>
           </div>
 
           <div class="menu-card">
@@ -353,14 +356,15 @@ export class UIManager {
             </div>
             <div class="stack" style="font-size:14px;line-height:1.5;">
               <div class="setting-row" style="flex-direction:column;align-items:flex-start;gap:4px;">
-                <strong style="color:var(--gold);">🎯 Temel Kural (3 Canlı Sumo & Engel Atlatma!)</strong>
-                <span>Zemin sağlamdır! Dönen 3D engellerden <strong>⬆️ ZIPLA</strong> ile atla, rakiplerini <strong>⚡ ATIL / 💥 İT</strong> ile kenardan aşağı fırlat! Herkesin <strong>3 Canı (❤️❤️❤️)</strong> var — son kalan şampiyon olur!</span>
+                <strong style="color:var(--gold);">🗺️ 3D Matematik Hazine Avı!</strong>
+                <span>Her turda önüne bir <strong>Hazine Haritası</strong> gelir! Haritadaki matematik işlemlerini çözüp <strong>Sütun (1-12, Sarı)</strong> ve <strong>Satır (1-12, Turkuaz)</strong> karesini bul, ilk koşan <strong>💎 Hazine Sandığını (+150 Puan)</strong> kapar!</span>
               </div>
 
               <div class="setting-row" style="flex-direction:column;align-items:flex-start;gap:4px;">
-                <strong style="color:#00f5d4;">🎮 Kontroller</strong>
+                <strong style="color:#00f5d4;">🎮 Kontroller & Aksiyon</strong>
+                <span><strong>Mobil:</strong> Ekrana parmağınla dokunarak yönlendir • <strong>⬆️ ZIPLA</strong> • <strong>⚡ ATIL / 💥 İT</strong></span>
                 <span><strong>Bilgisayar:</strong> WASD / Yön Tuşları • <strong>Space (⬆️ ZIPLA)</strong> • <strong>Shift/E (⚡ ATIL)</strong></span>
-                <span><strong>Mobil:</strong> Sol Joystick • Sağ <strong>⬆️ ZIPLA</strong> & <strong>⚡ ATIL</strong> butonları</span>
+                <span style="color:var(--text-muted);font-size:12px;">7 Hazine sonunda en çok puanı toplayan şampiyon olur!</span>
               </div>
 
               <div class="setting-row" style="flex-direction:column;align-items:flex-start;gap:4px;">
@@ -947,6 +951,9 @@ export class UIManager {
         <!-- DRAMATIC LEVEL BANNER -->
         <div class="level-banner" id="level-banner" style="display:none;"></div>
 
+        <!-- PARCHMENT TREASURE MAP POPUP -->
+        <div class="treasure-map-popup" id="treasure-map-popup" style="display:none;"></div>
+
         <!-- SPECTATE BAR -->
         <div class="spectate-bar" id="spectate-bar" style="display:none;">
           <span style="font-weight:900;color:var(--gold);">👀 İzleme Modu</span>
@@ -1018,6 +1025,10 @@ export class UIManager {
     });
     document.getElementById('btn-jump')?.addEventListener('click', () => {
       this.actions.onJump();
+    });
+    document.getElementById('treasure-map-popup')?.addEventListener('click', () => {
+      const el = document.getElementById('treasure-map-popup');
+      if (el) el.style.display = 'none';
     });
 
     const joyBase = document.getElementById('joystick-zone');
@@ -1298,54 +1309,82 @@ export class UIManager {
 
     if (bannerEl) {
       if (state.phase === 'scramble') {
-        const mins = Math.floor(state.matchTimeSec / 60);
-        const secs = Math.floor(state.matchTimeSec % 60);
-        const clock = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-        const hasEvent = state.disaster && state.disaster !== 'none';
-        const d = DISASTERS[state.disaster] ?? DISASTERS.none;
+        const hasClue = Boolean(state.clueColExpr && state.clueRowExpr);
+        const colorDef =
+          state.clueColorId >= 0 ? getTileColorById(state.clueColorId) : null;
+
+        // Pop up the Parchment Treasure Map when a new treasure round starts!
+        if (hasClue && state.treasureRound !== this.lastTreasureRound) {
+          this.lastTreasureRound = state.treasureRound;
+          this.showTreasureMapPopup(state);
+        }
 
         bannerEl.style.display = 'block';
-        bannerEl.style.borderColor = state.finalDuel
-          ? '#FF4757'
-          : hasEvent
-          ? d.color
-          : '#FFD32A';
+        bannerEl.style.borderColor = colorDef ? colorDef.hex : '#FFD32A';
 
         if (labelEl) {
-          labelEl.textContent = state.finalDuel
-            ? '🔥 SON 2 OYUNCU — FİNAL!'
-            : state.shrinkStage > 0
-            ? `⚠️ ARENA DARALDI (${state.shrinkStage}/3)`
-            : '💥 RAKİPLERİ KENARDAN AT • ⬆️ ZIPLA!';
+          labelEl.textContent = hasClue
+            ? `🗺️ HAZİNE ${state.treasureRound}/${state.totalTreasures} • ${state.clueLabel}`
+            : '💎 YENİ HAZİNE HARİTASI HAZIRLANIYOR...';
         }
         if (swatchEl) {
-          swatchEl.style.background = hasEvent ? d.color : '#2ED573';
-          swatchEl.textContent = hasEvent ? d.icon : '⏱️';
+          swatchEl.style.background = colorDef ? colorDef.hex : '#FFD32A';
+          swatchEl.textContent = colorDef ? colorDef.symbol : '💎';
         }
         if (nameEl) {
-          nameEl.textContent = clock;
+          nameEl.style.fontSize = '17px';
           nameEl.style.color = '#FFFFFF';
+          nameEl.textContent = hasClue
+            ? `Sütun: ${state.clueColExpr}  |  Satır: ${state.clueRowExpr}`
+            : 'HAZIR OL!';
         }
         if (fillEl) {
-          const nextShrink =
-            state.shrinkStage === 0 ? 30 : state.shrinkStage === 1 ? 60 : 90;
-          const pct = Math.max(
-            0,
-            Math.min(100, ((nextShrink - state.matchTimeSec) / 30) * 100)
-          );
-          fillEl.style.width = `${state.shrinkStage >= 3 ? 100 : pct}%`;
-          fillEl.style.background = state.shrinkStage >= 3 ? '#FF4757' : '#FFD32A';
+          const pct = Math.max(0, Math.min(100, (state.clueTimeLeft / 28) * 100));
+          fillEl.style.width = `${hasClue ? pct : 100}%`;
+          fillEl.style.background = colorDef ? colorDef.hex : '#FFD32A';
         }
         if (numEl) {
-          numEl.textContent =
-            state.shrinkStage >= 3
-              ? 'SON PLATFORM!'
-              : `Küçülme: ${Math.max(0, Math.ceil((state.shrinkStage + 1) * 30 - state.matchTimeSec))}s`;
+          numEl.textContent = hasClue
+            ? `🎨 ${colorDef?.name ?? ''} • ⏱️ ${Math.ceil(state.clueTimeLeft)}s`
+            : '✨';
         }
       } else {
         bannerEl.style.display = 'none';
       }
     }
+  }
+
+  private showTreasureMapPopup(state: RoomStateSnapshot) {
+    const el = document.getElementById('treasure-map-popup');
+    if (!el) return;
+    const colorDef = getTileColorById(state.clueColorId);
+    el.innerHTML = `
+      <div class="tmap-header">🗺️ HAZİNE HARİTASI (${state.treasureRound}/${state.totalTreasures})</div>
+      <div class="tmap-eq-box">
+        <div class="tmap-eq">
+          <div class="tmap-eq-lbl" style="color:#b45309;">SÜTUN (→ Üst Sarı)</div>
+          <div class="tmap-eq-val">${escapeHtml(state.clueColExpr)} = ?</div>
+        </div>
+        <div class="tmap-eq">
+          <div class="tmap-eq-lbl" style="color:#0e7490;">SATIR (↓ Sol Mavi)</div>
+          <div class="tmap-eq-val">${escapeHtml(state.clueRowExpr)} = ?</div>
+        </div>
+      </div>
+      <div class="tmap-hint" style="border:2px solid ${colorDef.hex};">
+        <span style="color:${colorDef.hex};">${colorDef.symbol}</span>
+        <span>Renk İpucu: ${colorDef.name}</span>
+      </div>
+      <div class="tmap-tap">Kapatıp hemen koşmak için dokun!</div>
+    `;
+    el.style.display = 'block';
+    soundManager.playLevelUp();
+
+    if (this.treasureMapTimer !== null) {
+      window.clearTimeout(this.treasureMapTimer);
+    }
+    this.treasureMapTimer = window.setTimeout(() => {
+      el.style.display = 'none';
+    }, 3400);
   }
 
   private renderResultOverlay() {

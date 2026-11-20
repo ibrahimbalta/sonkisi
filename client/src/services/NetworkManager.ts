@@ -11,6 +11,7 @@ import {
   PowerUpKind,
   PowerUpPickedPayload,
   SERVER_MESSAGES,
+  TreasureFoundPayload,
 } from '../../../shared/src/index';
 
 export interface PlayerSnapshot {
@@ -33,6 +34,7 @@ export interface PlayerSnapshot {
   hasBomb: boolean;
   lives: number;
   kills: number;
+  treasuresFound: number;
   score: number;
   dashCooldown: number;
 }
@@ -74,6 +76,13 @@ export interface RoomStateSnapshot {
   matchTimeSec: number;
   shrinkStage: number;
   finalDuel: boolean;
+  treasureRound: number;
+  totalTreasures: number;
+  clueColExpr: string;
+  clueRowExpr: string;
+  clueColorId: number;
+  clueLabel: string;
+  clueTimeLeft: number;
   disaster: DisasterKind;
   windX: number;
   windY: number;
@@ -105,6 +114,7 @@ export interface NetworkCallbacks {
   onMeteorImpact?: (payload: { x: number; y: number }) => void;
   onBombExploded?: (payload: { x: number; y: number; victimName: string }) => void;
   onKnockoutCredit?: (payload: KnockoutCreditPayload) => void;
+  onTreasureFound?: (payload: TreasureFoundPayload) => void;
   onDisconnected: (reconnecting: boolean) => void;
   onReconnected: () => void;
   onRoomLeft: (reason?: string) => void;
@@ -320,6 +330,13 @@ export class NetworkManager {
       }
     );
 
+    room.onMessage(
+      SERVER_MESSAGES.TREASURE_FOUND,
+      (payload: TreasureFoundPayload) => {
+        this.callbacks.onTreasureFound?.(payload);
+      }
+    );
+
     room.onLeave(async (code) => {
       if (this.intentionalLeave) {
         this.room = null;
@@ -374,6 +391,7 @@ export class NetworkManager {
           hasBomb: Boolean(p.hasBomb),
           lives: Number(p.lives ?? 3),
           kills: Number(p.kills ?? 0),
+          treasuresFound: Number(p.treasuresFound ?? 0),
           score: Number(p.score ?? 0),
           dashCooldown: Number(p.dashCooldown ?? 0),
         });
@@ -442,6 +460,13 @@ export class NetworkManager {
       matchTimeSec: Number(raw.matchTimeSec ?? 0),
       shrinkStage: Number(raw.shrinkStage ?? 0),
       finalDuel: Boolean(raw.finalDuel),
+      treasureRound: Number(raw.treasureRound ?? 0),
+      totalTreasures: Number(raw.totalTreasures ?? 7),
+      clueColExpr: String(raw.clueColExpr ?? ''),
+      clueRowExpr: String(raw.clueRowExpr ?? ''),
+      clueColorId: Number(raw.clueColorId ?? -1),
+      clueLabel: String(raw.clueLabel ?? ''),
+      clueTimeLeft: Number(raw.clueTimeLeft ?? 0),
       disaster: (raw.disaster ?? 'none') as DisasterKind,
       windX: Number(raw.windX ?? 0),
       windY: Number(raw.windY ?? 0),

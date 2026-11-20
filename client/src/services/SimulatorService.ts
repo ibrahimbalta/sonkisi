@@ -23,16 +23,50 @@ const SIM_NAMES = [
   'SimBuz',
 ];
 
+function evalMathClue(expr: string): number | null {
+  if (!expr) return null;
+  try {
+    // Convert Turkish math symbols (×, ÷, √N) to safe arithmetic
+    const normalized = expr
+      .replace(/×/g, '*')
+      .replace(/÷/g, '/')
+      .replace(/√(\d+)/g, (_, n) => String(Math.round(Math.sqrt(Number(n)))));
+    if (!/^[\d+\-*/()\s]+$/.test(normalized)) return null;
+    // eslint-disable-next-line no-new-func
+    const val = Number(new Function(`return (${normalized})`)());
+    return Number.isFinite(val) ? Math.round(val) : null;
+  } catch {
+    return null;
+  }
+}
+
 function findNextIntactTile(
   tiles: number[],
-  safeColor: number,
+  clueColorId: number,
   x: number,
-  y: number
+  y: number,
+  solvedCol: number | null,
+  solvedRow: number | null
 ): { cx: number; cy: number } | null {
   const cols = ARENA_CONFIG.GRID_COLS;
   const size = ARENA_CONFIG.TILE_SIZE;
-  const intact: { cx: number; cy: number; score: number }[] = [];
 
+  // If this bot finished solving the math clue, sprint toward (solvedCol, solvedRow)!
+  if (
+    solvedCol !== null &&
+    solvedRow !== null &&
+    solvedCol >= 1 &&
+    solvedCol <= cols &&
+    solvedRow >= 1 &&
+    solvedRow <= ARENA_CONFIG.GRID_ROWS
+  ) {
+    return {
+      cx: (solvedCol - 1) * size + size / 2,
+      cy: (solvedRow - 1) * size + size / 2,
+    };
+  }
+
+  const intact: { cx: number; cy: number; score: number }[] = [];
   for (let i = 0; i < tiles.length; i++) {
     const v = tiles[i];
     if (v >= 0 && v < 10) {
@@ -41,15 +75,14 @@ function findNextIntactTile(
       const cx = col * size + size / 2;
       const cy = row * size + size / 2;
       const d = Math.hypot(cx - x, cy - y);
-      if (d < 28) continue; // Keep moving off the tile we're standing on!
-      // Prefer nearby intact tiles, with a bonus for the Bonus Color
-      const bonus = v === safeColor ? -55 : 0;
+      if (d < 28) continue;
+      const bonus = v === clueColorId ? -45 : 0;
       intact.push({ cx, cy, score: d + bonus });
     }
   }
   if (intact.length === 0) return null;
   intact.sort((a, b) => a.score - b.score);
-  const top = intact[Math.floor(Math.random() * Math.min(3, intact.length))];
+  const top = intact[Math.floor(Math.random() * Math.min(4, intact.length))];
   return { cx: top.cx, cy: top.cy };
 }
 
@@ -76,11 +109,11 @@ export class SimulatorService {
           roomCode,
         });
 
-        const skillDelayMs = 200 + Math.random() * 520;
-        const mistakeChance = 0.14 + Math.random() * 0.25;
+        // Each simulated rival takes 3.5s - 9.5s to "solve" the math clue so human players can beat them!
+        const mathSolveDelayMs = 3500 + i * 650 + Math.random() * 1800;
         let target: { cx: number; cy: number } | null = null;
-        let lastRound = -1;
-        let reactAt = 0;
+        let lastTreasureRound = -1;
+        let solveAt = 0;
 
         const timerId = window.setInterval(() => {
           const st = room.state as any;
@@ -91,26 +124,28 @@ export class SimulatorService {
             return;
           }
 
-          if (st.phase === 'scramble' || st.phase === 'warning' || st.phase === 'drop') {
-            if (st.round !== lastRound) {
-              lastRound = st.round;
+          if (st.phase === 'scramble') {
+            if (st.treasureRound !== lastTreasureRound) {
+              lastTreasureRound = st.treasureRound;
               target = null;
-              reactAt = Date.now() + skillDelayMs;
+              solveAt = Date.now() + mathSolveDelayMs;
             }
-            if (Date.now() < reactAt) {
-              room.send(CLIENT_MESSAGES.INPUT, { dx: 0, dy: 0 });
-              return;
-            }
+            const solved = Date.now() >= solveAt;
+            const solvedCol = solved ? evalMathClue(String(st.clueColExpr ?? '')) : null;
+            const solvedRow = solved ? evalMathClue(String(st.clueRowExpr ?? '')) : null;
+
             const reachedTarget =
-              target && Math.hypot(target.cx - Number(me.x), target.cy - Number(me.y)) < 26;
-            if ((!target || reachedTarget || Math.random() < 0.2) && st.tiles) {
+              target && Math.hypot(target.cx - Number(me.x), target.cy - Number(me.y)) < 24;
+            if ((!target || reachedTarget || solved) && st.tiles) {
               const arr: number[] = [];
               for (let t = 0; t < st.tiles.length; t++) arr.push(Number(st.tiles[t]));
               target = findNextIntactTile(
                 arr,
-                Number(st.safeColor),
+                Number(st.clueColorId ?? -1),
                 Number(me.x),
-                Number(me.y)
+                Number(me.y),
+                solvedCol,
+                solvedRow
               );
             }
             if (target) {

@@ -506,7 +506,21 @@ export const SERVER_MESSAGES = {
   METEOR_IMPACT: 'meteor_impact',
   BOMB_EXPLODED: 'bomb_exploded',
   KNOCKOUT_CREDIT: 'knockout_credit',
+  TREASURE_FOUND: 'treasure_found',
 } as const;
+
+export interface TreasureFoundPayload {
+  finderSessionId: string;
+  finderName: string;
+  finderAvatar: string;
+  col: number; // 0..11
+  row: number; // 0..11
+  x: number;
+  y: number;
+  points: number;
+  treasureNumber: number;
+  totalTreasures: number;
+}
 
 export interface KnockoutCreditPayload {
   killerSessionId: string;
