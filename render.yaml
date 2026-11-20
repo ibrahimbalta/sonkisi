@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: sonkisi-server
+    runtime: node
+    plan: free
+    buildCommand: npm --prefix server install && npm --prefix server run build
+    startCommand: npm --prefix server run start
+    healthCheckPath: /health
+    envVars:
+      - key: MIN_PLAYERS
+        value: "10"
+      - key: CORS_ORIGIN
+        value: "*"
