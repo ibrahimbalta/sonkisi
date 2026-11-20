@@ -204,9 +204,10 @@ export class ThreeArenaEngine {
     this.scene.fog = new THREE.FogExp2(0x281759, 0.0085);
 
     // Perspective Camera
+    const initAspect = window.innerWidth / window.innerHeight;
     this.camera = new THREE.PerspectiveCamera(
-      46,
-      window.innerWidth / window.innerHeight,
+      initAspect < 0.75 ? 56 : 46,
+      initAspect,
       0.5,
       260
     );
@@ -961,7 +962,9 @@ export class ThreeArenaEngine {
   // INPUT & RESIZE HANDLERS
   // ============================================================
   private handleResize = () => {
-    this.camera.aspect = window.innerWidth / window.innerHeight;
+    const aspect = window.innerWidth / window.innerHeight;
+    this.camera.aspect = aspect;
+    this.camera.fov = aspect < 0.75 ? 56 : 46;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
   };
@@ -1129,9 +1132,9 @@ export class ThreeArenaEngine {
         }
       }
 
-      const targetCamX = isPortrait ? focusX * 0.65 : focusX * 0.22;
-      const targetCamY = isPortrait ? 20.5 : 23.5;
-      const targetCamZ = isPortrait ? focusZ * 0.55 + 17.5 : focusZ * 0.2 + 22.5;
+      const targetCamX = isPortrait ? focusX * 0.52 : focusX * 0.22;
+      const targetCamY = isPortrait ? 28.5 : 23.5;
+      const targetCamZ = isPortrait ? focusZ * 0.45 + 21.5 : focusZ * 0.2 + 22.5;
 
       const camLerp = Math.min(1, dt * 5);
       this.camera.position.x += (targetCamX - this.camera.position.x) * camLerp;
@@ -1146,8 +1149,8 @@ export class ThreeArenaEngine {
         this.cameraShake = 0;
       }
 
-      const lookX = isPortrait ? focusX * 0.55 : focusX * 0.15;
-      const lookZ = isPortrait ? focusZ * 0.55 + 0.5 : focusZ * 0.15 + 1.2;
+      const lookX = isPortrait ? focusX * 0.45 : focusX * 0.15;
+      const lookZ = isPortrait ? focusZ * 0.4 + 0.8 : focusZ * 0.15 + 1.2;
       this.camera.lookAt(lookX, -0.8, lookZ);
 
       // Poll keyboard + joystick input

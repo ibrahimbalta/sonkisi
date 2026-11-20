@@ -820,7 +820,8 @@ export class UIManager {
           <div class="joystick-knob" id="joystick-knob"></div>
         </div>
 
-        <!-- EMOJI BAR -->
+        <!-- EMOJI PICKER (Compact toggle on mobile, bar on desktop) -->
+        <button class="emoji-toggle-btn" id="btn-emoji-toggle" style="display:none;">😊</button>
         <div class="emoji-bar" id="emoji-bar">${emojiButtons}</div>
 
         <!-- DASH ACTION BUTTON -->
@@ -887,7 +888,13 @@ export class UIManager {
       btn.addEventListener('click', () => {
         const emoji = btn.dataset.emoji!;
         this.actions.onSendEmoji(emoji);
+        document.getElementById('emoji-bar')?.classList.remove('mobile-open');
       });
+    });
+
+    document.getElementById('btn-emoji-toggle')?.addEventListener('click', () => {
+      soundManager.playClick();
+      document.getElementById('emoji-bar')?.classList.toggle('mobile-open');
     });
 
     document.querySelectorAll<HTMLElement>('[data-level-pick]').forEach((btn) => {
@@ -925,12 +932,21 @@ export class UIManager {
 
     const me = state.players.get(this.localSessionId);
     const amAlive = me ? me.alive : false;
+    const isNarrowMobile = window.innerWidth <= 768;
     const showJoy =
       (isTouchDevice() || storageService.getProfile().settings.forceJoystick) &&
       (isLobby || amAlive) &&
       state.phase !== 'finished';
     if (joyZone) joyZone.style.display = showJoy ? 'flex' : 'none';
-    if (emojiBar) emojiBar.style.display = amAlive || isLobby ? 'flex' : 'none';
+
+    const emojiToggle = document.getElementById('btn-emoji-toggle');
+    const canReact = (amAlive || isLobby) && state.phase !== 'finished';
+    if (emojiToggle) {
+      emojiToggle.style.display = isNarrowMobile && canReact ? 'flex' : 'none';
+    }
+    if (emojiBar) {
+      emojiBar.style.display = canReact ? 'flex' : 'none';
+    }
     if (specBar) {
       specBar.style.display =
         !isLobby && !amAlive && this.spectating && !this.winnerInfo ? 'flex' : 'none';
@@ -940,6 +956,7 @@ export class UIManager {
     const dashBtn = document.getElementById('btn-dash');
     const dashLabel = document.getElementById('dash-btn-label');
     if (dashBtn) {
+      // On narrow mobile lobby, keep controls cleanly above/clear of lobby panel
       const showDash = (amAlive || isLobby) && state.phase !== 'finished';
       dashBtn.style.display = showDash ? 'flex' : 'none';
       const cd = me?.dashCooldown ?? 0;

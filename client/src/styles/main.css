@@ -919,25 +919,121 @@ body,
   }
 }
 
-@media (max-width: 600px) {
+.emoji-toggle-btn {
+  pointer-events: auto;
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(108px, calc(env(safe-area-inset-bottom) + 100px));
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 2.5px solid #1e1b3a;
+  background: var(--bg-card);
+  font-size: 22px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.45);
+  z-index: 26;
+}
+
+@media (max-width: 768px) {
+  /* Move Lobby status/actions panel to TOP on mobile so bottom is 100% free for Joystick & Dash! */
+  .lobby-top-bar {
+    top: max(8px, env(safe-area-inset-top));
+    padding: 8px 12px;
+    border-radius: 18px;
+    width: 94vw;
+  }
+  .lobby-bottom-bar {
+    top: max(64px, calc(env(safe-area-inset-top) + 56px));
+    bottom: auto;
+    padding: 9px 12px;
+    gap: 7px;
+    border-radius: 18px;
+    width: 94vw;
+  }
+  .lobby-status-text {
+    font-size: 13px;
+  }
+  .lobby-players-strip {
+    max-height: 30px;
+  }
+
+  /* Compact HUD & Safe Color banner on mobile */
+  .hud-pill {
+    padding: 6px 10px;
+    font-size: 12px;
+    gap: 6px;
+    border-radius: 13px;
+  }
+  .safe-color-banner {
+    top: max(52px, calc(env(safe-area-inset-top) + 44px));
+    width: min(82vw, 240px);
+    padding: 7px 12px;
+    border-radius: 18px;
+  }
+  .safe-color-name {
+    font-size: 20px;
+  }
+  .safe-swatch {
+    width: 24px;
+    height: 24px;
+    font-size: 14px;
+  }
+
+  /* Mobile game-pad layout: Joystick bottom-left, Dash bottom-right, Emoji popup on tap */
+  .joystick-zone {
+    left: max(16px, env(safe-area-inset-left));
+    bottom: max(18px, env(safe-area-inset-bottom));
+    width: 108px;
+    height: 108px;
+  }
+  .joystick-knob {
+    width: 46px;
+    height: 46px;
+  }
+  .dash-btn {
+    right: max(16px, env(safe-area-inset-right));
+    bottom: max(22px, env(safe-area-inset-bottom));
+    width: 72px;
+    height: 72px;
+    font-size: 13px;
+  }
   .emoji-bar {
+    display: none !important;
+    right: max(72px, calc(env(safe-area-inset-right) + 64px));
+    bottom: max(108px, calc(env(safe-area-inset-bottom) + 100px));
     gap: 4px;
-    padding: 5px 6px;
+    padding: 5px 7px;
+    z-index: 27;
+  }
+  .emoji-bar.mobile-open {
+    display: flex !important;
   }
   .emoji-btn {
     width: 34px;
     height: 34px;
     font-size: 18px;
   }
-  .safe-color-banner {
-    top: max(56px, calc(env(safe-area-inset-top) + 46px));
-    width: min(86vw, 280px);
+
+  .powerup-badges {
+    bottom: max(136px, calc(env(safe-area-inset-bottom) + 128px));
   }
-  .char-grid {
-    grid-template-columns: repeat(2, 1fr);
+  .elim-feed {
+    top: max(150px, calc(env(safe-area-inset-top) + 142px));
+    max-width: 175px;
+  }
+  .elim-item {
+    font-size: 11px;
+    padding: 4px 8px;
   }
   .live-standings {
     display: none;
+  }
+  .char-grid {
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 
