@@ -7,6 +7,7 @@ import {
   resolveObstacleCollisions,
   updateObstacles,
 } from './LevelObstacles';
+import { isTileActiveInLevel } from './LevelShapes';
 import {
   ARENA_CONFIG,
   ARENA_HEIGHT,
@@ -161,6 +162,7 @@ export class SonKisiRoom extends Room<GameState> {
       this.state.startingLevel = lv;
       this.state.level = lv;
       this.obstacleMotions = buildObstaclesForLevel(lv, this.state.obstacles);
+      this.generateTiles(1);
     });
 
     this.onMessage(CLIENT_MESSAGES.DASH, (client) => {
@@ -280,28 +282,54 @@ export class SonKisiRoom extends Room<GameState> {
   }
 
   private getRandomSpawn(): { x: number; y: number } {
-    const margin = ARENA_CONFIG.TILE_SIZE;
-    return {
-      x: Math.round((margin + Math.random() * (ARENA_WIDTH - margin * 2)) * 10) / 10,
-      y: Math.round((margin + Math.random() * (ARENA_HEIGHT - margin * 2)) * 10) / 10,
-    };
+    const tileSize = ARENA_CONFIG.TILE_SIZE;
+    const valid: { x: number; y: number }[] = [];
+    for (let row = 1; row < ARENA_CONFIG.GRID_ROWS - 1; row++) {
+      for (let col = 1; col < ARENA_CONFIG.GRID_COLS - 1; col++) {
+        if (isTileActiveInLevel(this.state.level, row, col)) {
+          valid.push({
+            x: col * tileSize + tileSize / 2 + (Math.random() - 0.5) * 20,
+            y: row * tileSize + tileSize / 2 + (Math.random() - 0.5) * 20,
+          });
+        }
+      }
+    }
+    if (valid.length > 0) {
+      const pick = valid[Math.floor(Math.random() * valid.length)];
+      return {
+        x: Math.round(pick.x * 10) / 10,
+        y: Math.round(pick.y * 10) / 10,
+      };
+    }
+    return { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 };
   }
 
   private generateTiles(round: number) {
-    const total = ARENA_CONFIG.GRID_COLS * ARENA_CONFIG.GRID_ROWS;
+    const cols = ARENA_CONFIG.GRID_COLS;
+    const rows = ARENA_CONFIG.GRID_ROWS;
+    const total = cols * rows;
     const colorCount = TILE_COLORS.length;
     const arr: number[] = new Array(total);
+    const activeIndices: number[] = [];
 
-    for (let i = 0; i < total; i++) {
-      arr[i] = Math.floor(Math.random() * colorCount);
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const i = row * cols + col;
+        if (isTileActiveInLevel(this.state.level, row, col)) {
+          arr[i] = Math.floor(Math.random() * colorCount);
+          activeIndices.push(i);
+        } else {
+          arr[i] = -1; // Level cutout / abyss pit!
+        }
+      }
     }
 
-    // Ensure every color appears at least several times (scales gently down in later rounds)
-    const minPerColor = Math.max(4, 14 - Math.floor((round - 1) * 1.1));
+    // Ensure every color appears enough times among active tiles
+    const minPerColor = Math.max(4, Math.min(12, Math.floor(activeIndices.length / 9) - Math.floor((round - 1) * 0.6)));
     for (let c = 0; c < colorCount; c++) {
-      let count = arr.filter((v) => v === c).length;
-      while (count < minPerColor) {
-        const idx = Math.floor(Math.random() * total);
+      let count = activeIndices.filter((idx) => arr[idx] === c).length;
+      while (count < minPerColor && activeIndices.length > colorCount) {
+        const idx = activeIndices[Math.floor(Math.random() * activeIndices.length)];
         if (arr[idx] !== c) {
           arr[idx] = c;
           count++;
@@ -492,6 +520,14 @@ export class SonKisiRoom extends Room<GameState> {
     this.knockbacks.clear();
     this.shieldProtectedThisDrop.clear();
     this.generateTiles(this.state.round);
+    // Reposition any alive player standing over a newly cut pit onto a valid tile
+    this.state.players.forEach((p) => {
+      if (p.alive && !this.isOnAnySolidTile(p.x, p.y)) {
+        const sp = this.getRandomSpawn();
+        p.x = sp.x;
+        p.y = sp.y;
+      }
+    });
     this.spawnPowerUps();
     this.setupRoundDisaster();
 
@@ -645,9 +681,13 @@ export class SonKisiRoom extends Room<GameState> {
       this.simulateMovement(dt);
     }
 
-    // 2. Continuous fall check during drop phase (in case someone steps off safe tile)
+    // 2. Continuous fall check:
+    // - During drop phase: anyone not on a safe tile falls!
+    // - During scramble/warning: anyone pushed off the arena edge or into a level pit falls!
     if (this.state.phase === 'drop') {
       this.evaluateEliminations();
+    } else if (this.state.phase === 'scramble' || this.state.phase === 'warning') {
+      this.evaluateRingOutEliminations();
     }
 
     // 3. Phase state machine
@@ -770,11 +810,22 @@ export class SonKisiRoom extends Room<GameState> {
       const totalVx = moveVx + kbVx + windPushX;
       const totalVy = moveVy + kbVy + windPushY;
 
+      const isActiveCombat =
+        this.state.phase === 'scramble' ||
+        this.state.phase === 'warning' ||
+        this.state.phase === 'drop';
+
       if (Math.abs(totalVx) > 2 || Math.abs(totalVy) > 2) {
         let nx = player.x + totalVx * dt;
         let ny = player.y + totalVy * dt;
-        nx = Math.max(minX, Math.min(maxX, nx));
-        ny = Math.max(minY, Math.min(maxY, ny));
+        // In lobby/countdown keep players inside the arena; during combat allow ring-out knocks off the edge!
+        if (!isActiveCombat) {
+          nx = Math.max(minX, Math.min(maxX, nx));
+          ny = Math.max(minY, Math.min(maxY, ny));
+        } else {
+          nx = Math.max(-45, Math.min(ARENA_WIDTH + 45, nx));
+          ny = Math.max(-45, Math.min(ARENA_HEIGHT + 45, ny));
+        }
         player.x = Math.round(nx * 10) / 10;
         player.y = Math.round(ny * 10) / 10;
       }
@@ -835,13 +886,33 @@ export class SonKisiRoom extends Room<GameState> {
           const nx = dx / dist;
           const ny = dy / dist;
 
-          // Dash knockback push!
+          // Dash SLAM knockback push + tactile walking bump push!
           if (aDashing && !bDashing) {
-            this.knockbacks.set(b.sessionId, { vx: nx * 560, vy: ny * 560 });
+            this.knockbacks.set(b.sessionId, { vx: nx * 660, vy: ny * 660 });
             this.lastPushedBy.set(b.sessionId, { pusherId: a.sessionId, at: this.elapsedSec });
           } else if (bDashing && !aDashing) {
-            this.knockbacks.set(a.sessionId, { vx: -nx * 560, vy: -ny * 560 });
+            this.knockbacks.set(a.sessionId, { vx: -nx * 660, vy: -ny * 660 });
             this.lastPushedBy.set(a.sessionId, { pusherId: b.sessionId, at: this.elapsedSec });
+          } else if (distSq < minDistSq) {
+            // Regular walking body-check bump!
+            const aSpeed = Math.hypot(a.vx, a.vy);
+            const bSpeed = Math.hypot(b.vx, b.vy);
+            if (aSpeed > 0.25) {
+              const curB = this.knockbacks.get(b.sessionId) ?? { vx: 0, vy: 0 };
+              this.knockbacks.set(b.sessionId, {
+                vx: curB.vx + nx * 165,
+                vy: curB.vy + ny * 165,
+              });
+              this.lastPushedBy.set(b.sessionId, { pusherId: a.sessionId, at: this.elapsedSec });
+            }
+            if (bSpeed > 0.25) {
+              const curA = this.knockbacks.get(a.sessionId) ?? { vx: 0, vy: 0 };
+              this.knockbacks.set(a.sessionId, {
+                vx: curA.vx - nx * 165,
+                vy: curA.vy - ny * 165,
+              });
+              this.lastPushedBy.set(a.sessionId, { pusherId: b.sessionId, at: this.elapsedSec });
+            }
           }
 
           // Hot Bomb pass on contact!
@@ -871,6 +942,103 @@ export class SonKisiRoom extends Room<GameState> {
         }
       }
     }
+  }
+
+  private isOnAnySolidTile(x: number, y: number): boolean {
+    if (x < -6 || x > ARENA_WIDTH + 6 || y < -6 || y > ARENA_HEIGHT + 6) {
+      return false;
+    }
+    const tileSize = ARENA_CONFIG.TILE_SIZE;
+    const offsets = [
+      [0, 0],
+      [6, 0],
+      [-6, 0],
+      [0, 6],
+      [0, -6],
+    ];
+    for (const [ox, oy] of offsets) {
+      const col = Math.floor((x + ox) / tileSize);
+      const row = Math.floor((y + oy) / tileSize);
+      if (
+        col >= 0 &&
+        col < ARENA_CONFIG.GRID_COLS &&
+        row >= 0 &&
+        row < ARENA_CONFIG.GRID_ROWS
+      ) {
+        const idx = row * ARENA_CONFIG.GRID_COLS + col;
+        const val = this.state.tiles[idx];
+        if (val !== undefined && val >= 0) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private evaluateRingOutEliminations() {
+    const falling: Player[] = [];
+    let aliveBefore = 0;
+
+    this.state.players.forEach((p) => {
+      if (p.alive) {
+        aliveBefore++;
+        if (!this.isOnAnySolidTile(p.x, p.y)) {
+          if (p.hasShield) {
+            // Magic shield rescues from ring-out once!
+            p.hasShield = false;
+            const sp = this.getRandomSpawn();
+            p.x = sp.x;
+            p.y = sp.y;
+            this.knockbacks.delete(p.sessionId);
+          } else {
+            falling.push(p);
+          }
+        }
+      }
+    });
+
+    if (falling.length === 0) return;
+
+    const rankForBatch = aliveBefore;
+    for (const p of falling) {
+      p.alive = false;
+      p.hasBomb = false;
+      p.eliminatedRank = rankForBatch;
+      p.roundsSurvived = Math.max(0, this.state.round - 1);
+
+      const push = this.lastPushedBy.get(p.sessionId);
+      if (push && this.elapsedSec - push.at <= 3.5) {
+        const killer = this.state.players.get(push.pusherId);
+        if (killer && killer.sessionId !== p.sessionId) {
+          killer.kills += 1;
+          this.broadcast(SERVER_MESSAGES.KNOCKOUT_CREDIT, {
+            killerSessionId: killer.sessionId,
+            killerName: killer.name,
+            victimName: p.name,
+          });
+        }
+      }
+      this.lastPushedBy.delete(p.sessionId);
+
+      const client = this.clients.find((c) => c.sessionId === p.sessionId);
+      if (client) {
+        client.send(SERVER_MESSAGES.ELIMINATED, {
+          sessionId: p.sessionId,
+          rank: p.eliminatedRank,
+          totalPlayers: this.state.totalMatchPlayers,
+          roundsSurvived: p.roundsSurvived,
+        });
+      }
+
+      this.broadcast(SERVER_MESSAGES.ELIMINATION_FEED, {
+        name: p.name,
+        avatar: p.avatar,
+        rank: p.eliminatedRank,
+      });
+    }
+
+    this.recountAlive();
+    this.checkWinCondition();
   }
 
   private isOnSafeTile(x: number, y: number): boolean {

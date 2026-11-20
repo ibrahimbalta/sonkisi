@@ -387,31 +387,34 @@ body,
 .lobby-bottom-bar {
   pointer-events: auto;
   position: fixed;
-  bottom: max(14px, env(safe-area-inset-bottom));
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(94vw, 560px);
+  top: max(76px, calc(env(safe-area-inset-top) + 68px));
+  left: 14px;
+  transform: none;
+  width: 245px;
   background: var(--bg-card);
-  border: 3px solid var(--border-glow);
-  border-radius: 24px;
-  padding: 12px 16px;
+  border: 2.5px solid var(--border-glow);
+  border-radius: 20px;
+  padding: 11px 12px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
 }
 
 .lobby-status-text {
-  text-align: center;
+  text-align: left;
   font-weight: 800;
-  font-size: 15px;
+  font-size: 13px;
+  line-height: 1.35;
   color: #fff;
 }
 
 .lobby-players-strip {
   display: flex;
-  gap: 6px;
-  overflow-x: auto;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-height: 110px;
+  overflow-y: auto;
   padding-bottom: 2px;
 }
 
@@ -922,14 +925,14 @@ body,
 .emoji-toggle-btn {
   pointer-events: auto;
   position: fixed;
-  right: max(16px, env(safe-area-inset-right));
-  bottom: max(108px, calc(env(safe-area-inset-bottom) + 100px));
-  width: 48px;
-  height: 48px;
+  right: max(28px, calc(env(safe-area-inset-right) + 12px));
+  bottom: max(108px, calc(env(safe-area-inset-bottom) + 102px));
+  width: 46px;
+  height: 46px;
   border-radius: 50%;
   border: 2.5px solid #1e1b3a;
   background: var(--bg-card);
-  font-size: 22px;
+  font-size: 21px;
   display: none;
   align-items: center;
   justify-content: center;
@@ -939,26 +942,29 @@ body,
 }
 
 @media (max-width: 768px) {
-  /* Move Lobby status/actions panel to TOP on mobile so bottom is 100% free for Joystick & Dash! */
+  /* Ultra-compact Lobby pinned to top-left edge so the 3D arena stays open! */
   .lobby-top-bar {
-    top: max(8px, env(safe-area-inset-top));
-    padding: 8px 12px;
-    border-radius: 18px;
-    width: 94vw;
+    top: max(6px, env(safe-area-inset-top));
+    padding: 6px 10px;
+    border-radius: 16px;
+    width: 96vw;
   }
   .lobby-bottom-bar {
-    top: max(64px, calc(env(safe-area-inset-top) + 56px));
+    top: max(56px, calc(env(safe-area-inset-top) + 48px));
+    left: 8px;
     bottom: auto;
-    padding: 9px 12px;
-    gap: 7px;
-    border-radius: 18px;
-    width: 94vw;
+    padding: 7px 10px;
+    gap: 5px;
+    border-radius: 16px;
+    width: min(64vw, 230px);
   }
   .lobby-status-text {
-    font-size: 13px;
+    font-size: 11px;
   }
   .lobby-players-strip {
-    max-height: 30px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    max-height: 26px;
   }
 
   /* Compact HUD & Safe Color banner on mobile */
