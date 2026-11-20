@@ -201,6 +201,24 @@ async function bootstrap() {
       ui.pushEliminationFeed(payload);
     },
 
+    onMeteorImpact: (payload) => {
+      phaser.spawnShockwave(payload.x, payload.y, 0xff4757, 0.42);
+      soundManager.playExplosion();
+    },
+
+    onBombExploded: (payload) => {
+      phaser.spawnShockwave(payload.x, payload.y, 0xffa502, 0.55);
+      soundManager.playExplosion();
+      ui.showToast(`💥 ${payload.victimName} bombayla patladı!`, true);
+    },
+
+    onKnockoutCredit: (payload) => {
+      if (payload.killerSessionId === network.sessionId) {
+        soundManager.playKnockout();
+        ui.showToast(`🔥 ${payload.victimName} oyuncusunu itip eledin! +50 PUAN`);
+      }
+    },
+
     onDisconnected: (reconnecting) => {
       ui.setReconnecting(reconnecting);
     },

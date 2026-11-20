@@ -159,6 +159,7 @@ export class ThreeCharacter {
   private localRing: THREE.Mesh | null = null;
   private shieldBubble: THREE.Mesh;
   private speedAura: THREE.Mesh;
+  private bombGroup: THREE.Group;
   private nameSprite: THREE.Sprite;
   private emojiSprite: THREE.Sprite | null = null;
   private emojiLife = 0;
@@ -200,6 +201,27 @@ export class ThreeCharacter {
     this.speedAura.scale.setScalar(1.22);
     this.speedAura.visible = false;
     this.group.add(this.speedAura);
+
+    // Floating ticking 3D Hot Bomb above character head
+    this.bombGroup = new THREE.Group();
+    const bombBall = new THREE.Mesh(
+      new THREE.SphereGeometry(0.38, 14, 12),
+      new THREE.MeshStandardMaterial({
+        color: 0x1a1a2e,
+        emissive: 0xff2e00,
+        emissiveIntensity: 0.75,
+        roughness: 0.25,
+      })
+    );
+    const bombSpark = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.18, 0),
+      fireGlowMat
+    );
+    bombSpark.position.set(0, 0.48, 0);
+    this.bombGroup.add(bombBall, bombSpark);
+    this.bombGroup.position.set(0, 2.85, 0);
+    this.bombGroup.visible = false;
+    this.group.add(this.bombGroup);
 
     this.bodyPivot = new THREE.Group();
     this.bodyPivot.scale.setScalar(CHARACTER_SCALE);
@@ -532,9 +554,10 @@ export class ThreeCharacter {
     }
   }
 
-  public setEffects(hasShield: boolean, speedBoost: boolean) {
+  public setEffects(hasShield: boolean, speedBoost: boolean, hasBomb = false) {
     this.shieldBubble.visible = hasShield && this.alive;
     this.speedAura.visible = speedBoost && this.alive;
+    this.bombGroup.visible = hasBomb && this.alive;
   }
 
   public setWinnerCrown(show: boolean) {
@@ -650,6 +673,11 @@ export class ThreeCharacter {
     }
     if (this.speedAura.visible) {
       this.speedAura.rotation.z += dt * 5;
+    }
+    if (this.bombGroup.visible) {
+      const pulse = 1 + Math.sin(nowSec * 18) * 0.18;
+      this.bombGroup.scale.setScalar(pulse);
+      this.bombGroup.rotation.y += dt * 4;
     }
   }
 

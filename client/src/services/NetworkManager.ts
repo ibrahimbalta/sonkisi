@@ -1,10 +1,12 @@
 import { Client, Room } from 'colyseus.js';
 import {
   CLIENT_MESSAGES,
+  DisasterKind,
   EliminatedPayload,
   EliminationFeedPayload,
   EmojiBroadcast,
   GamePhase,
+  KnockoutCreditPayload,
   MatchWinnerPayload,
   PowerUpKind,
   PowerUpPickedPayload,
@@ -25,7 +27,17 @@ export interface PlayerSnapshot {
   connected: boolean;
   hasShield: boolean;
   speedBoost: boolean;
+  hasBomb: boolean;
+  kills: number;
   dashCooldown: number;
+}
+
+export interface MeteorSnapshot {
+  id: string;
+  x: number;
+  y: number;
+  radius: number;
+  timeLeft: number;
 }
 
 export interface PowerUpSnapshot {
@@ -54,6 +66,9 @@ export interface RoomStateSnapshot {
   round: number;
   level: number;
   startingLevel: number;
+  disaster: DisasterKind;
+  windX: number;
+  windY: number;
   safeColor: number;
   phaseTimeLeft: number;
   phaseDuration: number;
@@ -67,6 +82,7 @@ export interface RoomStateSnapshot {
   tiles: number[];
   obstacles: ObstacleSnapshot[];
   powerUps: PowerUpSnapshot[];
+  meteors: MeteorSnapshot[];
   players: Map<string, PlayerSnapshot>;
 }
 
@@ -78,6 +94,9 @@ export interface NetworkCallbacks {
   onPlayerDashed?: (payload: { sessionId: string; x: number; y: number }) => void;
   onPowerUpPicked?: (payload: PowerUpPickedPayload) => void;
   onEliminationFeed?: (payload: EliminationFeedPayload) => void;
+  onMeteorImpact?: (payload: { x: number; y: number }) => void;
+  onBombExploded?: (payload: { x: number; y: number; victimName: string }) => void;
+  onKnockoutCredit?: (payload: KnockoutCreditPayload) => void;
   onDisconnected: (reconnecting: boolean) => void;
   onReconnected: () => void;
   onRoomLeft: (reason?: string) => void;
@@ -267,6 +286,27 @@ export class NetworkManager {
       }
     );
 
+    room.onMessage(
+      SERVER_MESSAGES.METEOR_IMPACT,
+      (payload: { x: number; y: number }) => {
+        this.callbacks.onMeteorImpact?.(payload);
+      }
+    );
+
+    room.onMessage(
+      SERVER_MESSAGES.BOMB_EXPLODED,
+      (payload: { x: number; y: number; victimName: string }) => {
+        this.callbacks.onBombExploded?.(payload);
+      }
+    );
+
+    room.onMessage(
+      SERVER_MESSAGES.KNOCKOUT_CREDIT,
+      (payload: KnockoutCreditPayload) => {
+        this.callbacks.onKnockoutCredit?.(payload);
+      }
+    );
+
     room.onLeave(async (code) => {
       if (this.intentionalLeave) {
         this.room = null;
@@ -315,6 +355,8 @@ export class NetworkManager {
           connected: Boolean(p.connected),
           hasShield: Boolean(p.hasShield),
           speedBoost: Boolean(p.speedBoost),
+          hasBomb: Boolean(p.hasBomb),
+          kills: Number(p.kills ?? 0),
           dashCooldown: Number(p.dashCooldown ?? 0),
         });
       });
@@ -357,6 +399,20 @@ export class NetworkManager {
       }
     }
 
+    const meteors: MeteorSnapshot[] = [];
+    if (raw.meteors && typeof raw.meteors.length === 'number') {
+      for (let i = 0; i < raw.meteors.length; i++) {
+        const m = raw.meteors[i];
+        meteors.push({
+          id: String(m.id ?? `met_${i}`),
+          x: Number(m.x ?? 0),
+          y: Number(m.y ?? 0),
+          radius: Number(m.radius ?? 72),
+          timeLeft: Number(m.timeLeft ?? 1),
+        });
+      }
+    }
+
     return {
       phase: (raw.phase ?? 'lobby') as GamePhase,
       roomCode: String(raw.roomCode ?? ''),
@@ -365,6 +421,9 @@ export class NetworkManager {
       round: Number(raw.round ?? 0),
       level: Number(raw.level ?? 1),
       startingLevel: Number(raw.startingLevel ?? 1),
+      disaster: (raw.disaster ?? 'none') as DisasterKind,
+      windX: Number(raw.windX ?? 0),
+      windY: Number(raw.windY ?? 0),
       safeColor: Number(raw.safeColor ?? -1),
       phaseTimeLeft: Number(raw.phaseTimeLeft ?? 0),
       phaseDuration: Number(raw.phaseDuration ?? 0),
@@ -378,6 +437,7 @@ export class NetworkManager {
       tiles,
       obstacles,
       powerUps,
+      meteors,
       players,
     };
   }

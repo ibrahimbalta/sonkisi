@@ -1,5 +1,6 @@
 import {
   CHARACTERS,
+  DISASTERS,
   EliminatedPayload,
   EliminationFeedPayload,
   FUNNY_ELIMINATION_QUIPS,
@@ -810,6 +811,7 @@ export class UIManager {
               <div class="safe-timer-fill" id="safe-timer-fill" style="width:100%;"></div>
             </div>
             <div class="safe-timer-num" id="safe-timer-num">3.0s</div>
+            <div class="disaster-pill" id="disaster-pill" style="display:none;"></div>
           </div>
 
           <div class="center-countdown" id="center-countdown" style="display:none;">3</div>
@@ -969,13 +971,32 @@ export class UIManager {
     const puBadges = document.getElementById('powerup-badges');
     if (puBadges) {
       const pills: string[] = [];
+      if (me?.alive && me.hasBomb) {
+        pills.push('<div class="pu-pill bomb">💣 BOMBA SENDE! BİRİNE DOKUN!</div>');
+      }
       if (me?.alive && me.hasShield) {
-        pills.push('<div class="pu-pill">🛡️ BÜYÜ KALKANI AKTİF</div>');
+        pills.push('<div class="pu-pill">🛡️ BÜYÜ KALKANI</div>');
       }
       if (me?.alive && me.speedBoost) {
-        pills.push('<div class="pu-pill speed">⚡ HIZ İKSİRİ AKTİF</div>');
+        pills.push('<div class="pu-pill speed">⚡ HIZ İKSİRİ</div>');
+      }
+      if (me && me.kills > 0) {
+        pills.push(`<div class="pu-pill">🔥 ${me.kills} Eleme</div>`);
       }
       puBadges.innerHTML = pills.join('');
+    }
+
+    const disPill = document.getElementById('disaster-pill');
+    if (disPill) {
+      if (!isLobby && state.disaster && state.disaster !== 'none') {
+        const d = DISASTERS[state.disaster] ?? DISASTERS.none;
+        disPill.style.display = 'inline-block';
+        disPill.style.borderColor = d.color;
+        disPill.style.color = d.color;
+        disPill.textContent = `${d.icon} ${d.name}`;
+      } else {
+        disPill.style.display = 'none';
+      }
     }
 
     // Announce dramatic level banner when a new round/level starts

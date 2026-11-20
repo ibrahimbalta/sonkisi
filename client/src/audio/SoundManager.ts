@@ -123,6 +123,16 @@ class SoundManager {
     this.playTone(523.25, 0.1, 'triangle', 0.24, undefined, 0.08);
     this.playTone(659.25, 0.18, 'triangle', 0.26, undefined, 0.16);
   }
+
+  playExplosion() {
+    this.playTone(150, 0.32, 'sawtooth', 0.3, 35);
+    this.playTone(95, 0.36, 'triangle', 0.25, 28, 0.03);
+  }
+
+  playKnockout() {
+    this.playTone(660, 0.09, 'triangle', 0.26, undefined, 0);
+    this.playTone(990, 0.16, 'triangle', 0.3, 1320, 0.08);
+  }
 }
 
 export const soundManager = new SoundManager();

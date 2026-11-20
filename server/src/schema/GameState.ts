@@ -15,7 +15,17 @@ export class Player extends Schema {
   @type('boolean') connected: boolean = true;
   @type('boolean') hasShield: boolean = false;
   @type('boolean') speedBoost: boolean = false;
+  @type('boolean') hasBomb: boolean = false;
+  @type('number') kills: number = 0;
   @type('number') dashCooldown: number = 0;
+}
+
+export class Meteor extends Schema {
+  @type('string') id: string = '';
+  @type('number') x: number = 0;
+  @type('number') y: number = 0;
+  @type('number') radius: number = 72;
+  @type('number') timeLeft: number = 1.45;
 }
 
 export class PowerUp extends Schema {
@@ -44,6 +54,9 @@ export class GameState extends Schema {
   @type('number') round: number = 0;
   @type('number') level: number = 1;
   @type('number') startingLevel: number = 1;
+  @type('string') disaster: string = 'none';
+  @type('number') windX: number = 0;
+  @type('number') windY: number = 0;
   @type('number') safeColor: number = -1;
   @type('number') phaseTimeLeft: number = 0;
   @type('number') phaseDuration: number = 0;
@@ -57,5 +70,6 @@ export class GameState extends Schema {
   @type(['int8']) tiles = new ArraySchema<number>();
   @type([Obstacle]) obstacles = new ArraySchema<Obstacle>();
   @type([PowerUp]) powerUps = new ArraySchema<PowerUp>();
+  @type([Meteor]) meteors = new ArraySchema<Meteor>();
   @type({ map: Player }) players = new MapSchema<Player>();
 }

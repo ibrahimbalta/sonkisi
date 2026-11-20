@@ -277,6 +277,54 @@ export const CLIENT_MESSAGES = {
 
 export type PowerUpKind = 'speed' | 'shield';
 
+export type DisasterKind = 'none' | 'meteor' | 'ice' | 'bomb' | 'wind';
+
+export interface DisasterDef {
+  id: DisasterKind;
+  name: string;
+  icon: string;
+  description: string;
+  color: string;
+}
+
+export const DISASTERS: Record<DisasterKind, DisasterDef> = {
+  none: {
+    id: 'none',
+    name: 'Normal Tur',
+    icon: '✨',
+    description: 'Güvenli renge koş!',
+    color: '#2ED573',
+  },
+  meteor: {
+    id: 'meteor',
+    name: 'METEOR YAĞMURU',
+    icon: '☄️',
+    description: 'Kırmızı halkalardan kaç, göktaşları savurur!',
+    color: '#FF4757',
+  },
+  ice: {
+    id: 'ice',
+    name: 'BUZ ZEMİNİ',
+    icon: '🧊',
+    description: 'Arena buz gibi kaygan, dikkatli fren yap!',
+    color: '#48DBFB',
+  },
+  bomb: {
+    id: 'bomb',
+    name: 'SICAK BOMBA',
+    icon: '💣',
+    description: 'Bomba sendeyse başkasına dokunup devret!',
+    color: '#FFA502',
+  },
+  wind: {
+    id: 'wind',
+    name: 'FIRTINA RÜZGARI',
+    icon: '🌪️',
+    description: 'Güçlü rüzgar herkesi kenara sürüklüyor!',
+    color: '#A55EEA',
+  },
+};
+
 export const DASH_CONFIG = {
   COOLDOWN_SEC: 3.5,
   DURATION_SEC: 0.24,
@@ -435,7 +483,16 @@ export const SERVER_MESSAGES = {
   PLAYER_DASHED: 'player_dashed',
   POWERUP_PICKED: 'powerup_picked',
   ELIMINATION_FEED: 'elimination_feed',
+  METEOR_IMPACT: 'meteor_impact',
+  BOMB_EXPLODED: 'bomb_exploded',
+  KNOCKOUT_CREDIT: 'knockout_credit',
 } as const;
+
+export interface KnockoutCreditPayload {
+  killerSessionId: string;
+  killerName: string;
+  victimName: string;
+}
 
 export interface EliminationFeedPayload {
   name: string;

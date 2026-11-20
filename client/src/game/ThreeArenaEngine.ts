@@ -9,6 +9,7 @@ import {
   TILE_COLORS,
 } from '../../../shared/src/index';
 import {
+  MeteorSnapshot,
   ObstacleSnapshot,
   PowerUpSnapshot,
   RoomStateSnapshot,
@@ -150,8 +151,12 @@ export class ThreeArenaEngine {
   private players = new Map<string, ThreeCharacter>();
   private obstacles = new Map<string, Obstacle3D>();
   private powerUps = new Map<string, THREE.Group>();
+  private meteors = new Map<string, { group: THREE.Group; rock: THREE.Mesh; ring: THREE.Mesh }>();
   private shockwaves: { mesh: THREE.Mesh; life: number; maxLife: number }[] = [];
   private cameraShake = 0;
+  private currentDisaster = 'none';
+  private windX = 0;
+  private windY = 0;
 
   // Biome-reactive materials
   private skyMat!: THREE.ShaderMaterial;
@@ -552,6 +557,10 @@ export class ThreeArenaEngine {
     this.players.clear();
     this.clearObstacles();
     this.clearPowerUps();
+    this.clearMeteors();
+    this.currentDisaster = 'none';
+    this.windX = 0;
+    this.windY = 0;
     this.applyLevelBiome(1);
 
     // Restore tiles for ambient menu orbit
@@ -569,6 +578,74 @@ export class ThreeArenaEngine {
   private clearPowerUps() {
     this.powerUps.forEach((g) => this.scene.remove(g));
     this.powerUps.clear();
+  }
+
+  private clearMeteors() {
+    this.meteors.forEach((m) => this.scene.remove(m.group));
+    this.meteors.clear();
+  }
+
+  private syncMeteors(list: MeteorSnapshot[]) {
+    const seen = new Set<string>();
+    for (const m of list) {
+      seen.add(m.id);
+      let vis = this.meteors.get(m.id);
+      if (!vis) {
+        const g = new THREE.Group();
+        const pos = this.serverToWorld(m.x, m.y);
+        g.position.set(pos.x, 0, pos.z);
+        const r = m.radius * SERVER_TO_WORLD;
+
+        // Pulsing red danger ring on arena floor
+        const ring = new THREE.Mesh(
+          new THREE.RingGeometry(r * 0.72, r, 28),
+          new THREE.MeshBasicMaterial({
+            color: 0xff2e4c,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.85,
+            depthWrite: false,
+          })
+        );
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.y = 0.08;
+        g.add(ring);
+
+        // Blazing molten meteor rock falling from the sky!
+        const rock = new THREE.Mesh(
+          new THREE.DodecahedronGeometry(r * 0.55, 0),
+          new THREE.MeshStandardMaterial({
+            color: 0xff5252,
+            emissive: 0xff6b00,
+            emissiveIntensity: 1.2,
+            roughness: 0.3,
+            flatShading: true,
+          })
+        );
+        rock.position.y = 18;
+        rock.castShadow = true;
+        g.add(rock);
+
+        this.scene.add(g);
+        vis = { group: g, rock, ring };
+        this.meteors.set(m.id, vis);
+      }
+
+      // Drop meteor rock smoothly toward y=0.6 as timeLeft approaches 0
+      const ratio = Math.max(0, Math.min(1, m.timeLeft / 1.35));
+      vis.rock.position.y = 0.6 + ratio * 18;
+      vis.rock.rotation.x += 0.14;
+      vis.rock.rotation.z += 0.11;
+      const ringPulse = 0.85 + (1 - ratio) * 0.3;
+      vis.ring.scale.set(ringPulse, ringPulse, 1);
+    }
+
+    this.meteors.forEach((vis, id) => {
+      if (!seen.has(id)) {
+        this.scene.remove(vis.group);
+        this.meteors.delete(id);
+      }
+    });
   }
 
   private syncPowerUps(list: PowerUpSnapshot[]) {
@@ -803,8 +880,12 @@ export class ThreeArenaEngine {
     if (state.level && state.level !== this.currentLevel) {
       this.applyLevelBiome(state.level);
     }
+    this.currentDisaster = state.disaster ?? 'none';
+    this.windX = state.windX ?? 0;
+    this.windY = state.windY ?? 0;
     this.syncObstacles(state.obstacles ?? []);
     this.syncPowerUps(state.powerUps ?? []);
+    this.syncMeteors(state.meteors ?? []);
 
     // Trigger dramatic camera shake when tiles drop!
     if (prevPhase !== 'drop' && state.phase === 'drop') {
@@ -882,7 +963,7 @@ export class ThreeArenaEngine {
 
       const wasAlive = char.alive;
       char.setTarget(pos.x, pos.z, p.vx, p.vy, p.alive);
-      char.setEffects(p.hasShield, p.speedBoost);
+      char.setEffects(p.hasShield, p.speedBoost, p.hasBomb);
       if (wasAlive && !p.alive && id === this.localSessionId) {
         soundManager.playFall();
         this.cameraShake = 0.7;
@@ -1009,12 +1090,23 @@ export class ThreeArenaEngine {
       if (cl.group.position.x > 60) cl.group.position.x = -60;
     }
 
-    // Float stardust upward gently
+    // Float stardust upward gently (or streak sideways during Storm Wind!)
     const posAttr = this.stardust.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const isWind = this.isInRoom && this.currentDisaster === 'wind';
     for (let i = 0; i < posAttr.count; i++) {
+      let x = posAttr.getX(i);
       let y = posAttr.getY(i) + dt * 0.55;
+      let z = posAttr.getZ(i);
+      if (isWind) {
+        x += this.windX * dt * 16;
+        z += this.windY * dt * 16;
+        if (x > 29) x = -29;
+        if (x < -29) x = 29;
+        if (z > 29) z = -29;
+        if (z < -29) z = 29;
+      }
       if (y > 20) y = -6;
-      posAttr.setY(i, y);
+      posAttr.setXYZ(i, x, y, z);
     }
     posAttr.needsUpdate = true;
 

@@ -1,5 +1,5 @@
 import { Room, Client } from 'colyseus';
-import { GameState, Player, PowerUp } from '../schema/GameState';
+import { GameState, Meteor, Player, PowerUp } from '../schema/GameState';
 import {
   buildObstaclesForLevel,
   KnockbackVel,
@@ -64,9 +64,13 @@ export class SonKisiRoom extends Room<GameState> {
 
   private inputs = new Map<string, PlayerInput>();
   private knockbacks = new Map<string, KnockbackVel>();
+  private iceVelocities = new Map<string, { vx: number; vy: number }>();
+  private lastPushedBy = new Map<string, { pusherId: string; at: number }>();
+  private bombTransferCooldown = new Map<string, number>();
   private dashTimers = new Map<string, { timeLeft: number; dx: number; dy: number }>();
   private speedBoostTimers = new Map<string, number>();
   private shieldProtectedThisDrop = new Set<string>();
+  private meteorSpawnTimer = 0;
   private obstacleMotions: ObstacleMotion[] = [];
   private elapsedSec = 0;
   private lastEmojiTime = new Map<string, number>();
@@ -351,6 +355,8 @@ export class SonKisiRoom extends Room<GameState> {
       p.roundsSurvived = 0;
       p.hasShield = false;
       p.speedBoost = false;
+      p.hasBomb = false;
+      p.kills = 0;
       p.dashCooldown = 0;
       const spawn = this.getRandomSpawn();
       p.x = spawn.x;
@@ -360,7 +366,14 @@ export class SonKisiRoom extends Room<GameState> {
     this.dashTimers.clear();
     this.speedBoostTimers.clear();
     this.shieldProtectedThisDrop.clear();
+    this.iceVelocities.clear();
+    this.lastPushedBy.clear();
+    this.bombTransferCooldown.clear();
     this.state.powerUps.clear();
+    this.state.meteors.clear();
+    this.state.disaster = 'none';
+    this.state.windX = 0;
+    this.state.windY = 0;
 
     this.recountAlive();
     this.generateTiles(1);
@@ -384,6 +397,93 @@ export class SonKisiRoom extends Room<GameState> {
     }
   }
 
+  private setupRoundDisaster() {
+    this.state.meteors.clear();
+    this.iceVelocities.clear();
+    this.bombTransferCooldown.clear();
+    this.state.windX = 0;
+    this.state.windY = 0;
+    this.state.players.forEach((p) => {
+      p.hasBomb = false;
+    });
+
+    const aliveIds: string[] = [];
+    this.state.players.forEach((p) => {
+      if (p.alive) aliveIds.push(p.sessionId);
+    });
+
+    // Pick a fun chaotic disaster every round (bomb only if >= 2 alive)
+    const pool = aliveIds.length >= 2
+      ? ['meteor', 'ice', 'bomb', 'wind']
+      : ['meteor', 'ice', 'wind'];
+    const disaster = pool[(this.state.round - 1 + Math.floor(Math.random() * 2)) % pool.length];
+    this.state.disaster = disaster;
+
+    if (disaster === 'meteor') {
+      this.meteorSpawnTimer = 0.2;
+    } else if (disaster === 'wind') {
+      const a = Math.random() * Math.PI * 2;
+      this.state.windX = Math.round(Math.cos(a) * 100) / 100;
+      this.state.windY = Math.round(Math.sin(a) * 100) / 100;
+    } else if (disaster === 'bomb' && aliveIds.length >= 2) {
+      const bombCount = Math.min(3, Math.max(1, Math.floor(aliveIds.length / 4)));
+      const shuffled = aliveIds.sort(() => Math.random() - 0.5);
+      for (let i = 0; i < bombCount; i++) {
+        const p = this.state.players.get(shuffled[i]);
+        if (p) p.hasBomb = true;
+      }
+    }
+  }
+
+  private spawnMeteorWave() {
+    const count = 3;
+    const margin = ARENA_CONFIG.TILE_SIZE * 1.1;
+    for (let i = 0; i < count; i++) {
+      const m = new Meteor();
+      m.id = `met_${Date.now()}_${i}_${Math.floor(Math.random() * 999)}`;
+      m.x = Math.round(margin + Math.random() * (ARENA_WIDTH - margin * 2));
+      m.y = Math.round(margin + Math.random() * (ARENA_HEIGHT - margin * 2));
+      m.radius = 74;
+      m.timeLeft = 1.35;
+      this.state.meteors.push(m);
+    }
+  }
+
+  private updateMeteors(dt: number) {
+    if (
+      this.state.disaster === 'meteor' &&
+      (this.state.phase === 'scramble' || this.state.phase === 'warning')
+    ) {
+      this.meteorSpawnTimer -= dt;
+      if (this.meteorSpawnTimer <= 0) {
+        this.spawnMeteorWave();
+        this.meteorSpawnTimer = 1.05;
+      }
+    }
+
+    for (let i = this.state.meteors.length - 1; i >= 0; i--) {
+      const m = this.state.meteors[i];
+      if (!m) continue;
+      m.timeLeft = Math.max(0, Math.round((m.timeLeft - dt) * 100) / 100);
+      if (m.timeLeft <= 0) {
+        // Meteor impact! Knock back nearby players dramatically
+        this.state.players.forEach((p) => {
+          if (!p.alive) return;
+          const dx = p.x - m.x;
+          const dy = p.y - m.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist < m.radius + 36) {
+            const nx = dist > 0.1 ? dx / dist : Math.cos(Math.random() * 6.28);
+            const ny = dist > 0.1 ? dy / dist : Math.sin(Math.random() * 6.28);
+            this.knockbacks.set(p.sessionId, { vx: nx * 600, vy: ny * 600 });
+          }
+        });
+        this.broadcast(SERVER_MESSAGES.METEOR_IMPACT, { x: m.x, y: m.y });
+        this.state.meteors.splice(i, 1);
+      }
+    }
+  }
+
   private startNextRound() {
     this.state.round += 1;
     const nextLevel = ((this.state.startingLevel - 1 + (this.state.round - 1)) % 10) + 1;
@@ -393,6 +493,7 @@ export class SonKisiRoom extends Room<GameState> {
     this.shieldProtectedThisDrop.clear();
     this.generateTiles(this.state.round);
     this.spawnPowerUps();
+    this.setupRoundDisaster();
 
     // Pick a random safe color that definitely exists on the board
     const safeColor = Math.floor(Math.random() * TILE_COLORS.length);
@@ -427,6 +528,30 @@ export class SonKisiRoom extends Room<GameState> {
       if (this.state.tiles[i] !== this.state.safeColor) {
         this.state.tiles[i] = -1;
       }
+    }
+
+    // Detonate remaining Hot Bombs!
+    if (this.state.disaster === 'bomb') {
+      this.state.players.forEach((p) => {
+        if (p.alive && p.hasBomb) {
+          p.hasBomb = false;
+          this.broadcast(SERVER_MESSAGES.BOMB_EXPLODED, {
+            x: p.x,
+            y: p.y,
+            victimName: p.name,
+          });
+          if (p.hasShield) {
+            this.shieldProtectedThisDrop.add(p.sessionId);
+          } else {
+            // Blast player off with huge knockback
+            const a = Math.random() * Math.PI * 2;
+            this.knockbacks.set(p.sessionId, {
+              vx: Math.cos(a) * 680,
+              vy: Math.sin(a) * 680,
+            });
+          }
+        }
+      });
     }
 
     // Immediate elimination check
@@ -478,6 +603,8 @@ export class SonKisiRoom extends Room<GameState> {
       p.roundsSurvived = 0;
       p.hasShield = false;
       p.speedBoost = false;
+      p.hasBomb = false;
+      p.kills = 0;
       p.dashCooldown = 0;
       const spawn = this.getRandomSpawn();
       p.x = spawn.x;
@@ -487,7 +614,14 @@ export class SonKisiRoom extends Room<GameState> {
     this.dashTimers.clear();
     this.speedBoostTimers.clear();
     this.shieldProtectedThisDrop.clear();
+    this.iceVelocities.clear();
+    this.lastPushedBy.clear();
+    this.bombTransferCooldown.clear();
     this.state.powerUps.clear();
+    this.state.meteors.clear();
+    this.state.disaster = 'none';
+    this.state.windX = 0;
+    this.state.windY = 0;
 
     this.generateTiles(1);
     this.recountAlive();
@@ -496,6 +630,7 @@ export class SonKisiRoom extends Room<GameState> {
   private update(dt: number) {
     this.elapsedSec += dt;
     updateObstacles(this.state.obstacles, this.obstacleMotions, this.elapsedSec);
+    this.updateMeteors(dt);
 
     // 1. Simulate player movement (authoritative)
     const canMove =
@@ -614,9 +749,30 @@ export class SonKisiRoom extends Room<GameState> {
       const kbVx = kb?.vx ?? 0;
       const kbVy = kb?.vy ?? 0;
 
-      if (dx !== 0 || dy !== 0 || Math.abs(kbVx) > 2 || Math.abs(kbVy) > 2) {
-        let nx = player.x + (dx * speed * speedMult + kbVx) * dt;
-        let ny = player.y + (dy * speed * speedMult + kbVy) * dt;
+      // Ice floor slippery momentum vs normal crisp movement
+      let moveVx = dx * speed * speedMult;
+      let moveVy = dy * speed * speedMult;
+
+      if (this.state.disaster === 'ice' && !dash) {
+        const iv = this.iceVelocities.get(player.sessionId) ?? { vx: 0, vy: 0 };
+        const accel = Math.min(1, dt * 3.4);
+        iv.vx += (moveVx * 1.15 - iv.vx) * accel;
+        iv.vy += (moveVy * 1.15 - iv.vy) * accel;
+        this.iceVelocities.set(player.sessionId, iv);
+        moveVx = iv.vx;
+        moveVy = iv.vy;
+      }
+
+      // Storm wind push
+      const windPushX = this.state.disaster === 'wind' ? this.state.windX * 115 : 0;
+      const windPushY = this.state.disaster === 'wind' ? this.state.windY * 115 : 0;
+
+      const totalVx = moveVx + kbVx + windPushX;
+      const totalVy = moveVy + kbVy + windPushY;
+
+      if (Math.abs(totalVx) > 2 || Math.abs(totalVy) > 2) {
+        let nx = player.x + totalVx * dt;
+        let ny = player.y + totalVy * dt;
         nx = Math.max(minX, Math.min(maxX, nx));
         ny = Math.max(minY, Math.min(maxY, ny));
         player.x = Math.round(nx * 10) / 10;
@@ -659,25 +815,59 @@ export class SonKisiRoom extends Room<GameState> {
       activePlayers.push(player);
     });
 
-    // Gentle soft separation so players don't stack invisibly on the same pixel
-    const minDist = ARENA_CONFIG.PLAYER_RADIUS * 1.35;
+    // Player-to-player separation, DASH KNOCKBACK pushes, and HOT BOMB passing!
+    const minDist = ARENA_CONFIG.PLAYER_RADIUS * 1.45;
     const minDistSq = minDist * minDist;
+    const hitDistSq = (ARENA_CONFIG.PLAYER_RADIUS * 2.35) ** 2;
+
     for (let i = 0; i < activePlayers.length; i++) {
       const a = activePlayers[i];
+      const aDashing = this.dashTimers.has(a.sessionId);
       for (let j = i + 1; j < activePlayers.length; j++) {
         const b = activePlayers[j];
+        const bDashing = this.dashTimers.has(b.sessionId);
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         const distSq = dx * dx + dy * dy;
-        if (distSq > 0.001 && distSq < minDistSq) {
+
+        if (distSq > 0.001 && distSq < hitDistSq) {
           const dist = Math.sqrt(distSq);
-          const overlap = (minDist - dist) * 0.25;
           const nx = dx / dist;
           const ny = dy / dist;
-          a.x = Math.round(Math.max(minX, Math.min(maxX, a.x - nx * overlap)) * 10) / 10;
-          a.y = Math.round(Math.max(minY, Math.min(maxY, a.y - ny * overlap)) * 10) / 10;
-          b.x = Math.round(Math.max(minX, Math.min(maxX, b.x + nx * overlap)) * 10) / 10;
-          b.y = Math.round(Math.max(minY, Math.min(maxY, b.y + ny * overlap)) * 10) / 10;
+
+          // Dash knockback push!
+          if (aDashing && !bDashing) {
+            this.knockbacks.set(b.sessionId, { vx: nx * 560, vy: ny * 560 });
+            this.lastPushedBy.set(b.sessionId, { pusherId: a.sessionId, at: this.elapsedSec });
+          } else if (bDashing && !aDashing) {
+            this.knockbacks.set(a.sessionId, { vx: -nx * 560, vy: -ny * 560 });
+            this.lastPushedBy.set(a.sessionId, { pusherId: b.sessionId, at: this.elapsedSec });
+          }
+
+          // Hot Bomb pass on contact!
+          if (this.state.disaster === 'bomb' && a.hasBomb !== b.hasBomb) {
+            const cdA = this.bombTransferCooldown.get(a.sessionId) ?? 0;
+            const cdB = this.bombTransferCooldown.get(b.sessionId) ?? 0;
+            if (this.elapsedSec > cdA && this.elapsedSec > cdB) {
+              if (a.hasBomb) {
+                a.hasBomb = false;
+                b.hasBomb = true;
+              } else {
+                b.hasBomb = false;
+                a.hasBomb = true;
+              }
+              this.bombTransferCooldown.set(a.sessionId, this.elapsedSec + 0.6);
+              this.bombTransferCooldown.set(b.sessionId, this.elapsedSec + 0.6);
+            }
+          }
+
+          if (distSq < minDistSq) {
+            const overlap = (minDist - dist) * 0.25;
+            a.x = Math.round(Math.max(minX, Math.min(maxX, a.x - nx * overlap)) * 10) / 10;
+            a.y = Math.round(Math.max(minY, Math.min(maxY, a.y - ny * overlap)) * 10) / 10;
+            b.x = Math.round(Math.max(minX, Math.min(maxX, b.x + nx * overlap)) * 10) / 10;
+            b.y = Math.round(Math.max(minY, Math.min(maxY, b.y + ny * overlap)) * 10) / 10;
+          }
         }
       }
     }
@@ -767,8 +957,24 @@ export class SonKisiRoom extends Room<GameState> {
     const rankForBatch = aliveBefore;
     for (const p of falling) {
       p.alive = false;
+      p.hasBomb = false;
       p.eliminatedRank = rankForBatch;
       p.roundsSurvived = Math.max(0, this.state.round - 1);
+
+      // Award Knockout Credit if someone pushed this player within the last 3.5 seconds!
+      const push = this.lastPushedBy.get(p.sessionId);
+      if (push && this.elapsedSec - push.at <= 3.5) {
+        const killer = this.state.players.get(push.pusherId);
+        if (killer && killer.sessionId !== p.sessionId) {
+          killer.kills += 1;
+          this.broadcast(SERVER_MESSAGES.KNOCKOUT_CREDIT, {
+            killerSessionId: killer.sessionId,
+            killerName: killer.name,
+            victimName: p.name,
+          });
+        }
+      }
+      this.lastPushedBy.delete(p.sessionId);
 
       const client = this.clients.find((c) => c.sessionId === p.sessionId);
       if (client) {
