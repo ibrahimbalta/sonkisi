@@ -1,0 +1,318 @@
+import { Client, Room } from 'colyseus.js';
+import {
+  CLIENT_MESSAGES,
+  EliminatedPayload,
+  EmojiBroadcast,
+  GamePhase,
+  MatchWinnerPayload,
+  SERVER_MESSAGES,
+} from '../../../shared/src/index';
+
+export interface PlayerSnapshot {
+  sessionId: string;
+  name: string;
+  avatar: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  alive: boolean;
+  eliminatedRank: number;
+  roundsSurvived: number;
+  connected: boolean;
+}
+
+export interface ObstacleSnapshot {
+  id: string;
+  kind: 'pillar' | 'bumper' | 'slider' | 'orbiter' | 'sweeper';
+  x: number;
+  y: number;
+  radius: number;
+  width: number;
+  height: number;
+  angle: number;
+}
+
+export interface RoomStateSnapshot {
+  phase: GamePhase;
+  roomCode: string;
+  isPrivate: boolean;
+  hostSessionId: string;
+  round: number;
+  level: number;
+  startingLevel: number;
+  safeColor: number;
+  phaseTimeLeft: number;
+  phaseDuration: number;
+  minPlayersToStart: number;
+  maxPlayers: number;
+  aliveCount: number;
+  totalMatchPlayers: number;
+  winnerSessionId: string;
+  winnerName: string;
+  winnerAvatar: string;
+  tiles: number[];
+  obstacles: ObstacleSnapshot[];
+  players: Map<string, PlayerSnapshot>;
+}
+
+export interface NetworkCallbacks {
+  onStateUpdate: (state: RoomStateSnapshot) => void;
+  onEliminated: (payload: EliminatedPayload) => void;
+  onMatchWinner: (payload: MatchWinnerPayload) => void;
+  onEmoji: (payload: EmojiBroadcast) => void;
+  onDisconnected: (reconnecting: boolean) => void;
+  onReconnected: () => void;
+  onRoomLeft: (reason?: string) => void;
+}
+
+function getDefaultServerUrl(): string {
+  const envUrl = import.meta.env.VITE_SERVER_URL as string | undefined;
+  if (envUrl && envUrl.trim().length > 0) return envUrl.trim();
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${window.location.hostname}:2567`;
+}
+
+export class NetworkManager {
+  private client: Client;
+  private room: Room | null = null;
+  private callbacks: NetworkCallbacks;
+  private lastInputX = 0;
+  private lastInputY = 0;
+  private lastInputSentAt = 0;
+  private intentionalLeave = false;
+  private reconnectionToken: string | null = null;
+  private serverUrl: string;
+
+  constructor(callbacks: NetworkCallbacks) {
+    this.callbacks = callbacks;
+    this.serverUrl = getDefaultServerUrl();
+    this.client = new Client(this.serverUrl);
+  }
+
+  get sessionId(): string {
+    return this.room?.sessionId ?? '';
+  }
+
+  get isConnected(): boolean {
+    return this.room !== null;
+  }
+
+  get endpoint(): string {
+    return this.serverUrl;
+  }
+
+  async joinPublic(name: string, avatar: string): Promise<void> {
+    await this.leaveRoom();
+    this.intentionalLeave = false;
+    const room = await this.client.joinOrCreate('sonkisi_public', {
+      name,
+      avatar,
+      isPrivate: false,
+    });
+    this.attachRoom(room);
+  }
+
+  async createPrivate(name: string, avatar: string): Promise<string> {
+    await this.leaveRoom();
+    this.intentionalLeave = false;
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let roomCode = '';
+    for (let i = 0; i < 6; i++) {
+      roomCode += chars[Math.floor(Math.random() * chars.length)];
+    }
+
+    const room = await this.client.create('sonkisi_private', {
+      name,
+      avatar,
+      isPrivate: true,
+      roomCode,
+    });
+    this.attachRoom(room);
+    return roomCode;
+  }
+
+  async joinPrivate(roomCode: string, name: string, avatar: string): Promise<void> {
+    await this.leaveRoom();
+    this.intentionalLeave = false;
+    const normalized = roomCode.trim().toUpperCase();
+    const room = await this.client.join('sonkisi_private', {
+      name,
+      avatar,
+      isPrivate: true,
+      roomCode: normalized,
+    });
+    this.attachRoom(room);
+  }
+
+  async leaveRoom(): Promise<void> {
+    if (!this.room) return;
+    this.intentionalLeave = true;
+    this.reconnectionToken = null;
+    try {
+      await this.room.leave(true);
+    } catch {
+      // Ignore
+    }
+    this.room = null;
+  }
+
+  sendInput(dx: number, dy: number) {
+    if (!this.room) return;
+    const now = performance.now();
+    const changed =
+      Math.abs(dx - this.lastInputX) > 0.04 || Math.abs(dy - this.lastInputY) > 0.04;
+    const stopped = dx === 0 && dy === 0 && (this.lastInputX !== 0 || this.lastInputY !== 0);
+
+    if (!changed && !stopped && now - this.lastInputSentAt < 250) {
+      return;
+    }
+
+    this.lastInputX = dx;
+    this.lastInputY = dy;
+    this.lastInputSentAt = now;
+    this.room.send(CLIENT_MESSAGES.INPUT, {
+      dx: Math.round(dx * 100) / 100,
+      dy: Math.round(dy * 100) / 100,
+    });
+  }
+
+  sendEmoji(emoji: string) {
+    if (!this.room) return;
+    this.room.send(CLIENT_MESSAGES.EMOJI, { emoji });
+  }
+
+  sendStartPrivate() {
+    if (!this.room) return;
+    this.room.send(CLIENT_MESSAGES.START_PRIVATE);
+  }
+
+  sendPlayAgainPrivate() {
+    if (!this.room) return;
+    this.room.send(CLIENT_MESSAGES.PLAY_AGAIN);
+  }
+
+  sendSelectLevel(level: number) {
+    if (!this.room) return;
+    this.room.send(CLIENT_MESSAGES.SELECT_LEVEL, { level });
+  }
+
+  private attachRoom(room: Room) {
+    this.room = room;
+    this.reconnectionToken = room.reconnectionToken;
+
+    room.onStateChange((rawState: any) => {
+      const snapshot = this.extractSnapshot(rawState);
+      this.callbacks.onStateUpdate(snapshot);
+    });
+
+    room.onMessage(SERVER_MESSAGES.ELIMINATED, (payload: EliminatedPayload) => {
+      this.callbacks.onEliminated(payload);
+    });
+
+    room.onMessage(SERVER_MESSAGES.MATCH_WINNER, (payload: MatchWinnerPayload) => {
+      this.callbacks.onMatchWinner(payload);
+    });
+
+    room.onMessage(SERVER_MESSAGES.EMOJI, (payload: EmojiBroadcast) => {
+      this.callbacks.onEmoji(payload);
+    });
+
+    room.onLeave(async (code) => {
+      if (this.intentionalLeave) {
+        this.room = null;
+        return;
+      }
+
+      // Unexpected disconnect — try to reconnect automatically
+      const token = this.reconnectionToken;
+      if (token && code !== 1000) {
+        this.callbacks.onDisconnected(true);
+        for (let attempt = 0; attempt < 4; attempt++) {
+          await new Promise((r) => setTimeout(r, 1500));
+          try {
+            const reconnected = await this.client.reconnect(token);
+            this.attachRoom(reconnected);
+            this.callbacks.onReconnected();
+            return;
+          } catch {
+            // Retry
+          }
+        }
+      }
+
+      this.room = null;
+      this.reconnectionToken = null;
+      this.callbacks.onDisconnected(false);
+      this.callbacks.onRoomLeft('Sunucu bağlantısı kesildi.');
+    });
+  }
+
+  private extractSnapshot(raw: any): RoomStateSnapshot {
+    const players = new Map<string, PlayerSnapshot>();
+    if (raw.players && typeof raw.players.forEach === 'function') {
+      raw.players.forEach((p: any, key: string) => {
+        players.set(key, {
+          sessionId: p.sessionId ?? key,
+          name: p.name ?? 'Oyuncu',
+          avatar: p.avatar ?? 'cat',
+          x: Number(p.x ?? 0),
+          y: Number(p.y ?? 0),
+          vx: Number(p.vx ?? 0),
+          vy: Number(p.vy ?? 0),
+          alive: Boolean(p.alive),
+          eliminatedRank: Number(p.eliminatedRank ?? 0),
+          roundsSurvived: Number(p.roundsSurvived ?? 0),
+          connected: Boolean(p.connected),
+        });
+      });
+    }
+
+    const tiles: number[] = [];
+    if (raw.tiles && typeof raw.tiles.length === 'number') {
+      for (let i = 0; i < raw.tiles.length; i++) {
+        tiles.push(Number(raw.tiles[i]));
+      }
+    }
+
+    const obstacles: ObstacleSnapshot[] = [];
+    if (raw.obstacles && typeof raw.obstacles.length === 'number') {
+      for (let i = 0; i < raw.obstacles.length; i++) {
+        const o = raw.obstacles[i];
+        obstacles.push({
+          id: String(o.id ?? `obs_${i}`),
+          kind: (o.kind ?? 'pillar') as ObstacleSnapshot['kind'],
+          x: Number(o.x ?? 0),
+          y: Number(o.y ?? 0),
+          radius: Number(o.radius ?? 28),
+          width: Number(o.width ?? 0),
+          height: Number(o.height ?? 0),
+          angle: Number(o.angle ?? 0),
+        });
+      }
+    }
+
+    return {
+      phase: (raw.phase ?? 'lobby') as GamePhase,
+      roomCode: String(raw.roomCode ?? ''),
+      isPrivate: Boolean(raw.isPrivate),
+      hostSessionId: String(raw.hostSessionId ?? ''),
+      round: Number(raw.round ?? 0),
+      level: Number(raw.level ?? 1),
+      startingLevel: Number(raw.startingLevel ?? 1),
+      safeColor: Number(raw.safeColor ?? -1),
+      phaseTimeLeft: Number(raw.phaseTimeLeft ?? 0),
+      phaseDuration: Number(raw.phaseDuration ?? 0),
+      minPlayersToStart: Number(raw.minPlayersToStart ?? 10),
+      maxPlayers: Number(raw.maxPlayers ?? 50),
+      aliveCount: Number(raw.aliveCount ?? 0),
+      totalMatchPlayers: Number(raw.totalMatchPlayers ?? 0),
+      winnerSessionId: String(raw.winnerSessionId ?? ''),
+      winnerName: String(raw.winnerName ?? ''),
+      winnerAvatar: String(raw.winnerAvatar ?? ''),
+      tiles,
+      obstacles,
+      players,
+    };
+  }
+}

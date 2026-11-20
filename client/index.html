@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#1B1464" />
+    <meta
+      name="description"
+      content="SON KİŞİ — Herkes elenir, bir kişi kazanır! 50 kişilik renkli online multiplayer parti oyunu."
+    />
+    <title>SON KİŞİ — 50 Kişilik Online Parti Oyunu</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="app">
+      <!-- Phaser 3 Canvas Container -->
+      <div id="game-container"></div>
+
+      <!-- Confetti Overlay Canvas (Victory) -->
+      <canvas id="confetti-canvas"></canvas>
+
+      <!-- All Interactive UI Layers (Managed by UIManager) -->
+      <div id="ui-root"></div>
+
+      <!-- Toast Notifications -->
+      <div id="toast-container"></div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

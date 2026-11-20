@@ -1,0 +1,22 @@
+{
+  "name": "@sonkisi/client",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.46.1",
+    "@types/three": "^0.187.0",
+    "colyseus.js": "^0.15.26",
+    "phaser": "^3.86.0",
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}
