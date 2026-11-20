@@ -9,12 +9,20 @@ import { ConfettiController } from './ui/Confetti';
 import { UIManager } from './ui/UIManager';
 
 async function bootstrap() {
-  // 1. Apply saved audio settings
+  // 1. Apply saved audio settings & unlock music on first user interaction
   const initialProfile = storageService.getProfile();
   soundManager.setSettings(
     initialProfile.settings.sfxEnabled,
-    initialProfile.settings.sfxVolume
+    initialProfile.settings.sfxVolume,
+    initialProfile.settings.musicEnabled
   );
+  const unlockAudio = () => {
+    soundManager.unlockAndStartMusic();
+    window.removeEventListener('pointerdown', unlockAudio);
+    window.removeEventListener('keydown', unlockAudio);
+  };
+  window.addEventListener('pointerdown', unlockAudio, { once: true });
+  window.addEventListener('keydown', unlockAudio, { once: true });
 
   // 2. Init Three.js 3D Arena & Confetti
   const phaser = new ThreeArenaEngine('game-container');
@@ -137,6 +145,12 @@ async function bootstrap() {
   network = new NetworkManager({
     onStateUpdate: (state) => {
       currentRoomState = state;
+      const isMatchActive =
+        state.phase === 'scramble' ||
+        state.phase === 'warning' ||
+        state.phase === 'drop' ||
+        state.phase === 'round_end';
+      soundManager.setMusicIntensity(isMatchActive);
       phaser.applyState(state);
       ui.updateRoomState(state);
     },

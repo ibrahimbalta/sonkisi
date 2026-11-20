@@ -86,7 +86,7 @@ export class SonKisiRoom extends Room<GameState> {
         ? options.roomCode.trim().toUpperCase().slice(0, 8)
         : generateRoomCode();
 
-    const envMin = parseInt(process.env.MIN_PLAYERS || '', 10);
+    const envMin = parseInt(process.env.FORCE_MIN_PLAYERS || '', 10);
     const minPlayers =
       Number.isFinite(envMin) && envMin >= 2 && envMin <= 50
         ? envMin

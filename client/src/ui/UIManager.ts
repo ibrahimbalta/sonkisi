@@ -555,6 +555,13 @@ export class UIManager {
               </div>
 
               <div class="setting-row">
+                <span style="font-weight:800;">🎵 Oyun Müziği</span>
+                <input type="checkbox" id="chk-music" ${
+                  profile.settings.musicEnabled ? 'checked' : ''
+                } style="width:22px;height:22px;cursor:pointer;" />
+              </div>
+
+              <div class="setting-row">
                 <span style="font-weight:800;">🔊 Ses Efektleri</span>
                 <input type="checkbox" id="chk-sfx" ${
                   profile.settings.sfxEnabled ? 'checked' : ''
@@ -687,11 +694,18 @@ export class UIManager {
       this.render();
     });
 
+    const chkMusic = document.getElementById('chk-music') as HTMLInputElement | null;
+    chkMusic?.addEventListener('change', () => {
+      storageService.updateSettings({ musicEnabled: chkMusic.checked });
+      const s = storageService.getProfile().settings;
+      soundManager.setSettings(s.sfxEnabled, s.sfxVolume, s.musicEnabled);
+    });
+
     const chkSfx = document.getElementById('chk-sfx') as HTMLInputElement | null;
     chkSfx?.addEventListener('change', () => {
       storageService.updateSettings({ sfxEnabled: chkSfx.checked });
       const s = storageService.getProfile().settings;
-      soundManager.setSettings(s.sfxEnabled, s.sfxVolume);
+      soundManager.setSettings(s.sfxEnabled, s.sfxVolume, s.musicEnabled);
     });
 
     const rngVol = document.getElementById('rng-vol') as HTMLInputElement | null;
@@ -699,7 +713,7 @@ export class UIManager {
       const vol = Number(rngVol.value) / 100;
       storageService.updateSettings({ sfxVolume: vol });
       const s = storageService.getProfile().settings;
-      soundManager.setSettings(s.sfxEnabled, s.sfxVolume);
+      soundManager.setSettings(s.sfxEnabled, s.sfxVolume, s.musicEnabled);
     });
 
     const chkJoy = document.getElementById('chk-joystick') as HTMLInputElement | null;

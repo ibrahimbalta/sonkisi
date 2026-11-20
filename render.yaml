@@ -8,6 +8,6 @@ services:
     healthCheckPath: /health
     envVars:
       - key: MIN_PLAYERS
-        value: "10"
+        value: "2"
       - key: CORS_ORIGIN
         value: "*"

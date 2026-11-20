@@ -1,17 +1,154 @@
 class SoundManager {
   private ctx: AudioContext | null = null;
   private enabled = true;
+  private musicEnabled = true;
   private volume = 0.65;
 
-  setSettings(enabled: boolean, volume: number) {
+  // Procedural upbeat fantasy party music sequencer
+  private musicTimer: number | null = null;
+  private musicStep = 0;
+  private musicIntense = false;
+  private userUnlocked = false;
+
+  setSettings(enabled: boolean, volume: number, musicEnabled?: boolean) {
     this.enabled = enabled;
     this.volume = Math.max(0, Math.min(1, volume));
+    if (musicEnabled !== undefined) {
+      this.musicEnabled = musicEnabled;
+    }
+    if (!this.musicEnabled || this.volume <= 0.01) {
+      this.stopMusicLoop();
+    } else if (this.userUnlocked) {
+      this.startMusicLoop();
+    }
   }
 
-  private ensureContext(): AudioContext | null {
-    if (!this.enabled || this.volume <= 0.01) return null;
+  public unlockAndStartMusic() {
+    this.userUnlocked = true;
+    this.ensureContext();
+    if (this.musicEnabled && this.volume > 0.01) {
+      this.startMusicLoop();
+    }
+  }
+
+  public setMusicIntensity(intense: boolean) {
+    if (this.musicIntense === intense) return;
+    this.musicIntense = intense;
+    if (this.musicTimer !== null) {
+      this.stopMusicLoop();
+      this.startMusicLoop();
+    }
+  }
+
+  private startMusicLoop() {
+    if (this.musicTimer !== null || !this.musicEnabled) return;
+    // 16th-note step duration: 122 BPM in menu/lobby, 136 BPM during active match!
+    const stepMs = this.musicIntense ? 110 : 123;
+    this.musicTimer = window.setInterval(() => {
+      if (!this.musicEnabled || this.volume <= 0.01) return;
+      this.playMusicStep(this.musicStep);
+      this.musicStep = (this.musicStep + 1) % 32;
+    }, stepMs);
+  }
+
+  private stopMusicLoop() {
+    if (this.musicTimer !== null) {
+      window.clearInterval(this.musicTimer);
+      this.musicTimer = null;
+    }
+  }
+
+  private playMusicStep(step: number) {
+    const ctx = this.ensureContext(true);
+    if (!ctx || ctx.state !== 'running') return;
+
+    // Bright upbeat C-major / A-minor fantasy party progression (C - G - Am - F)
+    const melodyHz = [
+      523.25, 0, 659.25, 783.99, 1046.5, 0, 783.99, 659.25,
+      587.33, 0, 783.99, 987.77, 1174.66, 0, 987.77, 783.99,
+      440.0, 0, 523.25, 659.25, 880.0, 0, 659.25, 523.25,
+      698.46, 0, 880.0, 1046.5, 987.77, 880.0, 783.99, 659.25,
+    ];
+    const bassHz = [
+      130.81, 0, 0, 130.81, 196.0, 0, 130.81, 0,
+      196.0, 0, 0, 196.0, 246.94, 0, 196.0, 0,
+      110.0, 0, 0, 110.0, 164.81, 0, 110.0, 0,
+      174.61, 0, 0, 174.61, 196.0, 0, 196.0, 0,
+    ];
+
+    const now = ctx.currentTime;
+    const mVol = this.volume * 0.14;
+
+    // Lead sparkle synth
+    const leadFreq = melodyHz[step];
+    if (leadFreq > 0) {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(leadFreq, now);
+      g.gain.setValueAtTime(0.001, now);
+      g.gain.linearRampToValueAtTime(mVol * 0.75, now + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.18);
+    }
+
+    // Bouncy warm bass
+    const bFreq = bassHz[step];
+    if (bFreq > 0) {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(bFreq, now);
+      g.gain.setValueAtTime(0.001, now);
+      g.gain.linearRampToValueAtTime(mVol * 1.15, now + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.24);
+    }
+
+    // Soft punchy kick on every beat (0, 4, 8, 12...)
+    if (step % 4 === 0) {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(135, now);
+      osc.frequency.exponentialRampToValueAtTime(42, now + 0.09);
+      g.gain.setValueAtTime(mVol * 1.25, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.11);
+    }
+
+    // Offbeat crisp hi-hat tick during active match
+    if (this.musicIntense && step % 4 === 2) {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(2400, now);
+      g.gain.setValueAtTime(mVol * 0.16, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.035);
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.04);
+    }
+  }
+
+  private ensureContext(forMusic = false): AudioContext | null {
+    if (!forMusic && !this.enabled) return null;
+    if (this.volume <= 0.01) return null;
     if (!this.ctx) {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext })
+          .webkitAudioContext;
       if (!AudioCtx) return null;
       this.ctx = new AudioCtx();
     }
@@ -81,7 +218,6 @@ class SoundManager {
   }
 
   playFall() {
-    // Classic funny cartoon falling whistle
     this.playTone(880, 0.48, 'sine', 0.28, 170);
     this.playTone(200, 0.15, 'triangle', 0.2, 80, 0.45);
   }

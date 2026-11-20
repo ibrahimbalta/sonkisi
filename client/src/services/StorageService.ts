@@ -2,6 +2,7 @@ import { CHARACTERS } from '../../../shared/src/index';
 
 export interface LocalSettings {
   sfxEnabled: boolean;
+  musicEnabled: boolean;
   sfxVolume: number;
   forceJoystick: boolean;
 }
@@ -62,6 +63,7 @@ function defaultProfile(): LocalProfile {
     avatarId: CHARACTERS[Math.floor(Math.random() * CHARACTERS.length)].id,
     settings: {
       sfxEnabled: true,
+      musicEnabled: true,
       sfxVolume: 0.7,
       forceJoystick: false,
     },
