@@ -71,6 +71,7 @@ export class SonKisiRoom extends Room<GameState> {
   private dashTimers = new Map<string, { timeLeft: number; dx: number; dy: number }>();
   private speedBoostTimers = new Map<string, number>();
   private shieldProtectedThisDrop = new Set<string>();
+  private tileCrackTimers = new Map<number, number>();
   private meteorSpawnTimer = 0;
   private obstacleMotions: ObstacleMotion[] = [];
   private elapsedSec = 0;
@@ -385,6 +386,7 @@ export class SonKisiRoom extends Room<GameState> {
       p.speedBoost = false;
       p.hasBomb = false;
       p.kills = 0;
+      p.score = 0;
       p.dashCooldown = 0;
       const spawn = this.getRandomSpawn();
       p.x = spawn.x;
@@ -394,6 +396,7 @@ export class SonKisiRoom extends Room<GameState> {
     this.dashTimers.clear();
     this.speedBoostTimers.clear();
     this.shieldProtectedThisDrop.clear();
+    this.tileCrackTimers.clear();
     this.iceVelocities.clear();
     this.lastPushedBy.clear();
     this.bombTransferCooldown.clear();
@@ -519,6 +522,7 @@ export class SonKisiRoom extends Room<GameState> {
     this.obstacleMotions = buildObstaclesForLevel(nextLevel, this.state.obstacles);
     this.knockbacks.clear();
     this.shieldProtectedThisDrop.clear();
+    this.tileCrackTimers.clear();
     this.generateTiles(this.state.round);
     // Reposition any alive player standing over a newly cut pit onto a valid tile
     this.state.players.forEach((p) => {
@@ -531,15 +535,13 @@ export class SonKisiRoom extends Room<GameState> {
     this.spawnPowerUps();
     this.setupRoundDisaster();
 
-    // Pick a random safe color that definitely exists on the board
+    // Pick a Bonus/Safe color (+15 pts per tile, immune to danger wave!)
     const safeColor = Math.floor(Math.random() * TILE_COLORS.length);
     this.state.safeColor = safeColor;
 
-    const roundTime = Math.max(
-      ARENA_CONFIG.MIN_ROUND_TIME_SEC,
-      ARENA_CONFIG.INITIAL_ROUND_TIME_SEC - (this.state.round - 1) * ARENA_CONFIG.ROUND_TIME_DECAY_SEC
-    );
-    const scrambleTime = Math.max(0.55, roundTime - ARENA_CONFIG.WARNING_DURATION_SEC);
+    // Longer, dynamic Hex-A-Gone style rounds (7.5s -> 5.0s) so players carve paths & earn points!
+    const roundTime = Math.max(5.0, 7.5 - (this.state.round - 1) * 0.25);
+    const scrambleTime = Math.max(1.5, roundTime - ARENA_CONFIG.WARNING_DURATION_SEC);
 
     this.state.phase = 'scramble';
     this.phaseTimer = scrambleTime;
@@ -555,14 +557,23 @@ export class SonKisiRoom extends Room<GameState> {
 
   private startDropPhase() {
     this.state.phase = 'drop';
-    this.phaseTimer = ARENA_CONFIG.DROP_DURATION_SEC;
-    this.state.phaseDuration = ARENA_CONFIG.DROP_DURATION_SEC;
-    this.state.phaseTimeLeft = ARENA_CONFIG.DROP_DURATION_SEC;
+    this.phaseTimer = 1.6;
+    this.state.phaseDuration = 1.6;
+    this.state.phaseTimeLeft = 1.6;
 
-    // Remove all non-safe tiles
+    // Instead of dropping ALL other colors at once, drop 2 random danger colors (keeping the Safe Color intact!)
+    // so the match stays exciting and continues across multiple levels!
+    const otherColors = TILE_COLORS.map((c) => c.id).filter((id) => id !== this.state.safeColor);
+    const shuffled = otherColors.sort(() => Math.random() - 0.5);
+    const dangerSet = new Set(shuffled.slice(0, 2));
+
     for (let i = 0; i < this.state.tiles.length; i++) {
-      if (this.state.tiles[i] !== this.state.safeColor) {
+      const val = this.state.tiles[i];
+      if (val === undefined || val < 0) continue;
+      const baseColor = val >= 10 ? val - 10 : val;
+      if (dangerSet.has(baseColor)) {
         this.state.tiles[i] = -1;
+        this.tileCrackTimers.delete(i);
       }
     }
 
@@ -579,7 +590,6 @@ export class SonKisiRoom extends Room<GameState> {
           if (p.hasShield) {
             this.shieldProtectedThisDrop.add(p.sessionId);
           } else {
-            // Blast player off with huge knockback
             const a = Math.random() * Math.PI * 2;
             this.knockbacks.set(p.sessionId, {
               vx: Math.cos(a) * 680,
@@ -590,8 +600,8 @@ export class SonKisiRoom extends Room<GameState> {
       });
     }
 
-    // Immediate elimination check
-    this.evaluateEliminations();
+    // Check who is over a void/hole now
+    this.evaluateRingOutEliminations();
   }
 
   private startRoundEndPhase() {
@@ -602,10 +612,11 @@ export class SonKisiRoom extends Room<GameState> {
     });
     this.shieldProtectedThisDrop.clear();
 
-    // Award surviving players +1 round survived
+    // Award surviving players +1 round survived & +30 survival bonus points
     this.state.players.forEach((p) => {
       if (p.alive) {
         p.roundsSurvived = this.state.round;
+        p.score += 30;
       }
     });
 
@@ -641,6 +652,7 @@ export class SonKisiRoom extends Room<GameState> {
       p.speedBoost = false;
       p.hasBomb = false;
       p.kills = 0;
+      p.score = 0;
       p.dashCooldown = 0;
       const spawn = this.getRandomSpawn();
       p.x = spawn.x;
@@ -650,6 +662,7 @@ export class SonKisiRoom extends Room<GameState> {
     this.dashTimers.clear();
     this.speedBoostTimers.clear();
     this.shieldProtectedThisDrop.clear();
+    this.tileCrackTimers.clear();
     this.iceVelocities.clear();
     this.lastPushedBy.clear();
     this.bombTransferCooldown.clear();
@@ -663,10 +676,56 @@ export class SonKisiRoom extends Room<GameState> {
     this.recountAlive();
   }
 
+  private updateCrackingTiles(dt: number) {
+    if (
+      this.state.phase !== 'scramble' &&
+      this.state.phase !== 'warning' &&
+      this.state.phase !== 'drop'
+    ) {
+      return;
+    }
+
+    // 1. Trigger cracking on any intact tile (0..5) an alive player steps onto, awarding live points!
+    const tileSize = ARENA_CONFIG.TILE_SIZE;
+    this.state.players.forEach((p) => {
+      if (!p.alive) return;
+      const col = Math.floor(p.x / tileSize);
+      const row = Math.floor(p.y / tileSize);
+      if (
+        col >= 0 &&
+        col < ARENA_CONFIG.GRID_COLS &&
+        row >= 0 &&
+        row < ARENA_CONFIG.GRID_ROWS
+      ) {
+        const idx = row * ARENA_CONFIG.GRID_COLS + col;
+        const val = this.state.tiles[idx];
+        if (val !== undefined && val >= 0 && val < 10) {
+          // Mark tile as cracking (val + 10) — drops in 0.72s!
+          this.state.tiles[idx] = val + 10;
+          this.tileCrackTimers.set(idx, 0.72);
+          // Award points: +15 for Bonus/Safe Color, +5 for regular tile!
+          p.score += val === this.state.safeColor ? 15 : 5;
+        }
+      }
+    });
+
+    // 2. Count down cracking tiles and drop them individually when their timer hits 0!
+    this.tileCrackTimers.forEach((left, idx) => {
+      const next = left - dt;
+      if (next <= 0) {
+        this.tileCrackTimers.delete(idx);
+        this.state.tiles[idx] = -1;
+      } else {
+        this.tileCrackTimers.set(idx, next);
+      }
+    });
+  }
+
   private update(dt: number) {
     this.elapsedSec += dt;
     updateObstacles(this.state.obstacles, this.obstacleMotions, this.elapsedSec);
     this.updateMeteors(dt);
+    this.updateCrackingTiles(dt);
 
     // 1. Simulate player movement (authoritative)
     const canMove =
@@ -682,11 +741,12 @@ export class SonKisiRoom extends Room<GameState> {
     }
 
     // 2. Continuous fall check:
-    // - During drop phase: anyone not on a safe tile falls!
-    // - During scramble/warning: anyone pushed off the arena edge or into a level pit falls!
-    if (this.state.phase === 'drop') {
-      this.evaluateEliminations();
-    } else if (this.state.phase === 'scramble' || this.state.phase === 'warning') {
+    // Any player who steps or gets pushed into a dropped tile hole or off the edge falls!
+    if (
+      this.state.phase === 'scramble' ||
+      this.state.phase === 'warning' ||
+      this.state.phase === 'drop'
+    ) {
       this.evaluateRingOutEliminations();
     }
 
@@ -1011,6 +1071,7 @@ export class SonKisiRoom extends Room<GameState> {
         const killer = this.state.players.get(push.pusherId);
         if (killer && killer.sessionId !== p.sessionId) {
           killer.kills += 1;
+          killer.score += 50;
           this.broadcast(SERVER_MESSAGES.KNOCKOUT_CREDIT, {
             killerSessionId: killer.sessionId,
             killerName: killer.name,
@@ -1135,6 +1196,7 @@ export class SonKisiRoom extends Room<GameState> {
         const killer = this.state.players.get(push.pusherId);
         if (killer && killer.sessionId !== p.sessionId) {
           killer.kills += 1;
+          killer.score += 50;
           this.broadcast(SERVER_MESSAGES.KNOCKOUT_CREDIT, {
             killerSessionId: killer.sessionId,
             killerName: killer.name,
@@ -1208,7 +1270,7 @@ export class SonKisiRoom extends Room<GameState> {
         this.state.winnerAvatar = w.avatar;
 
         const pointsAwarded =
-          100 + this.state.totalMatchPlayers * 10 + this.state.round * 15;
+          w.score + 100 + this.state.totalMatchPlayers * 10 + this.state.round * 15;
 
         this.broadcast(SERVER_MESSAGES.MATCH_WINNER, {
           winnerSessionId: w.sessionId,

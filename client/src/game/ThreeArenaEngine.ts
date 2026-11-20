@@ -35,6 +35,7 @@ interface Tile3D {
   baseX: number;
   baseZ: number;
   colorId: number;
+  cracking: boolean;
   dropped: boolean;
   velY: number;
   rotVx: number;
@@ -399,6 +400,7 @@ export class ThreeArenaEngine {
           baseX: bx,
           baseZ: bz,
           colorId,
+          cracking: false,
           dropped: false,
           velY: 0,
           rotVx: 0,
@@ -924,11 +926,15 @@ export class ThreeArenaEngine {
       this.updateCornerCrystalColor(0x00e5ff);
     }
 
-    // Update 144 3D tiles
+    // Update 144 3D tiles (supports intact 0..5, cracking 10..15, dropped -1)
     for (let i = 0; i < this.tiles.length && i < state.tiles.length; i++) {
       const tile = this.tiles[i];
-      const newColor = state.tiles[i];
-      const isDropped = newColor === -1;
+      const rawVal = state.tiles[i];
+      const isDropped = rawVal === -1;
+      const isCracking = rawVal >= 10;
+      const newColor = isDropped ? -1 : isCracking ? rawVal - 10 : rawVal;
+
+      tile.cracking = isCracking;
 
       if (tile.colorId !== newColor || tile.dropped !== isDropped) {
         this.setTileColorAndState(tile, newColor, isDropped, true);
@@ -936,7 +942,9 @@ export class ThreeArenaEngine {
 
       if (!isDropped) {
         const mat = tile.mesh.material as THREE.MeshStandardMaterial;
-        if (
+        if (isCracking) {
+          mat.emissiveIntensity = 0.72;
+        } else if (
           (state.phase === 'scramble' || state.phase === 'warning') &&
           newColor === state.safeColor
         ) {
@@ -1136,14 +1144,17 @@ export class ThreeArenaEngine {
         }
       } else if (
         this.isInRoom &&
-        this.currentPhase === 'warning' &&
-        tile.colorId !== this.currentSafeColor
+        (tile.cracking ||
+          (this.currentPhase === 'warning' && tile.colorId !== this.currentSafeColor))
       ) {
-        tile.mesh.position.x = tile.baseX + (Math.random() - 0.5) * 0.14;
-        tile.mesh.position.z = tile.baseZ + (Math.random() - 0.5) * 0.14;
-        tile.mesh.rotation.z = (Math.random() - 0.5) * 0.14;
+        const amp = tile.cracking ? 0.19 : 0.12;
+        tile.mesh.position.x = tile.baseX + (Math.random() - 0.5) * amp;
+        tile.mesh.position.y = tile.cracking ? -0.36 : -0.26;
+        tile.mesh.position.z = tile.baseZ + (Math.random() - 0.5) * amp;
+        tile.mesh.rotation.z = (Math.random() - 0.5) * amp;
       } else {
         tile.mesh.position.x = tile.baseX;
+        tile.mesh.position.y = -0.26;
         tile.mesh.position.z = tile.baseZ;
         tile.mesh.rotation.set(0, 0, 0);
       }

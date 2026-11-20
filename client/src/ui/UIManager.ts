@@ -879,7 +879,7 @@ export class UIManager {
             <div class="hud-pill">
               <span id="hud-level" style="color:var(--gold);">☁️ Lv.1</span>
               <span style="opacity:0.4;">|</span>
-              <span id="hud-round">Tur 1</span>
+              <span id="hud-score" style="color:#00f5d4;">⭐ 0</span>
               <span style="opacity:0.4;">|</span>
               <span id="hud-alive" style="color:var(--green);">👥 0 / 0</span>
             </div>
@@ -1175,7 +1175,7 @@ export class UIManager {
     // Active match HUD
     const levelDef = getLevelByNumber(state.level);
     const levelEl = document.getElementById('hud-level');
-    const roundEl = document.getElementById('hud-round');
+    const scoreEl = document.getElementById('hud-score');
     const aliveEl = document.getElementById('hud-alive');
     const bannerEl = document.getElementById('safe-color-banner');
     const labelEl = document.getElementById('safe-color-label');
@@ -1186,8 +1186,8 @@ export class UIManager {
     const centerCd = document.getElementById('center-countdown');
     const matchIntroSub = document.getElementById('match-intro-sub');
 
-    if (levelEl) levelEl.textContent = `${levelDef.icon} Lv.${levelDef.level} ${levelDef.name}`;
-    if (roundEl) roundEl.textContent = `Tur ${Math.max(1, state.round)}`;
+    if (levelEl) levelEl.textContent = `${levelDef.icon} Lv.${levelDef.level}`;
+    if (scoreEl) scoreEl.textContent = `⭐ ${me?.score ?? 0}`;
     if (aliveEl) aliveEl.textContent = `👥 ${state.aliveCount} / ${state.totalMatchPlayers}`;
 
     if (matchIntroSub) {
@@ -1212,7 +1212,7 @@ export class UIManager {
         if (a.alive && !b.alive) return -1;
         if (!a.alive && b.alive) return 1;
         if (a.alive && b.alive) {
-          if (b.roundsSurvived !== a.roundsSurvived) return b.roundsSurvived - a.roundsSurvived;
+          if (b.score !== a.score) return b.score - a.score;
           return a.sessionId === this.localSessionId ? -1 : b.sessionId === this.localSessionId ? 1 : 0;
         }
         return (a.eliminatedRank || 999) - (b.eliminatedRank || 999);
@@ -1236,7 +1236,7 @@ export class UIManager {
           const isMe = p.sessionId === this.localSessionId;
           const idx = sorted.indexOf(p);
           const rankLabel = p.alive ? `#${idx + 1}` : `#${p.eliminatedRank || idx + 1}`;
-          const statusIcon = p.alive ? '🟢' : '☠️';
+          const statusIcon = p.alive ? `⭐${p.score}` : '☠️';
           return `
             <div class="standings-row ${isMe ? 'me' : ''} ${!p.alive ? 'out' : ''}">
               <span style="display:flex;align-items:center;gap:5px;min-width:0;">
@@ -1275,10 +1275,10 @@ export class UIManager {
         if (labelEl) {
           labelEl.textContent =
             state.phase === 'drop'
-              ? '💥 DİĞER KARELER KAYBOLDU!'
+              ? '💥 TEHLİKELİ RENKLER DÜŞTÜ!'
               : state.phase === 'warning'
-              ? '⚠️ ACELE ET! DÜŞÜYOR!'
-              : '🎯 GÜVENLİ RENGE KOŞ!';
+              ? '⚠️ BASILAN TAŞLAR DÜŞÜYOR!'
+              : '🌟 BONUS RENK (+15 PUAN)';
         }
         if (swatchEl) {
           swatchEl.style.background = colorDef.hex;

@@ -17,6 +17,7 @@ export class Player extends Schema {
   @type('boolean') speedBoost: boolean = false;
   @type('boolean') hasBomb: boolean = false;
   @type('number') kills: number = 0;
+  @type('number') score: number = 0;
   @type('number') dashCooldown: number = 0;
 }
 

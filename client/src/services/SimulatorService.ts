@@ -23,34 +23,33 @@ const SIM_NAMES = [
   'SimBuz',
 ];
 
-function findSafeTileCenter(
+function findNextIntactTile(
   tiles: number[],
   safeColor: number,
   x: number,
-  y: number,
-  mistakeChance: number
+  y: number
 ): { cx: number; cy: number } | null {
   const cols = ARENA_CONFIG.GRID_COLS;
   const size = ARENA_CONFIG.TILE_SIZE;
-  const list: { cx: number; cy: number; d: number }[] = [];
+  const intact: { cx: number; cy: number; score: number }[] = [];
 
   for (let i = 0; i < tiles.length; i++) {
-    if (tiles[i] === safeColor) {
+    const v = tiles[i];
+    if (v >= 0 && v < 10) {
       const col = i % cols;
       const row = Math.floor(i / cols);
       const cx = col * size + size / 2;
       const cy = row * size + size / 2;
-      list.push({ cx, cy, d: Math.hypot(cx - x, cy - y) });
+      const d = Math.hypot(cx - x, cy - y);
+      if (d < 28) continue; // Keep moving off the tile we're standing on!
+      // Prefer nearby intact tiles, with a bonus for the Bonus Color
+      const bonus = v === safeColor ? -55 : 0;
+      intact.push({ cx, cy, score: d + bonus });
     }
   }
-  if (list.length === 0) return null;
-  list.sort((a, b) => a.d - b.d);
-
-  if (Math.random() < mistakeChance && list.length > 3) {
-    const pick = list[Math.min(list.length - 1, 3 + Math.floor(Math.random() * 4))];
-    return { cx: pick.cx, cy: pick.cy };
-  }
-  const top = list[Math.floor(Math.random() * Math.min(2, list.length))];
+  if (intact.length === 0) return null;
+  intact.sort((a, b) => a.score - b.score);
+  const top = intact[Math.floor(Math.random() * Math.min(3, intact.length))];
   return { cx: top.cx, cy: top.cy };
 }
 
@@ -92,7 +91,7 @@ export class SimulatorService {
             return;
           }
 
-          if (st.phase === 'scramble' || st.phase === 'warning') {
+          if (st.phase === 'scramble' || st.phase === 'warning' || st.phase === 'drop') {
             if (st.round !== lastRound) {
               lastRound = st.round;
               target = null;
@@ -102,24 +101,25 @@ export class SimulatorService {
               room.send(CLIENT_MESSAGES.INPUT, { dx: 0, dy: 0 });
               return;
             }
-            if (!target && st.tiles) {
+            const reachedTarget =
+              target && Math.hypot(target.cx - Number(me.x), target.cy - Number(me.y)) < 26;
+            if ((!target || reachedTarget || Math.random() < 0.2) && st.tiles) {
               const arr: number[] = [];
               for (let t = 0; t < st.tiles.length; t++) arr.push(Number(st.tiles[t]));
-              target = findSafeTileCenter(
+              target = findNextIntactTile(
                 arr,
                 Number(st.safeColor),
                 Number(me.x),
-                Number(me.y),
-                mistakeChance + Number(st.round) * 0.04
+                Number(me.y)
               );
             }
             if (target) {
               const dx = target.cx - Number(me.x);
               const dy = target.cy - Number(me.y);
               const dist = Math.hypot(dx, dy);
-              if (dist > 10) {
+              if (dist > 8) {
                 room.send(CLIENT_MESSAGES.INPUT, { dx: dx / dist, dy: dy / dist });
-                if (dist > 150 && Math.random() < 0.06) {
+                if (dist > 140 && Math.random() < 0.07) {
                   room.send(CLIENT_MESSAGES.DASH);
                 }
               } else {

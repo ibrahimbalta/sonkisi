@@ -29,6 +29,7 @@ export interface PlayerSnapshot {
   speedBoost: boolean;
   hasBomb: boolean;
   kills: number;
+  score: number;
   dashCooldown: number;
 }
 
@@ -357,6 +358,7 @@ export class NetworkManager {
           speedBoost: Boolean(p.speedBoost),
           hasBomb: Boolean(p.hasBomb),
           kills: Number(p.kills ?? 0),
+          score: Number(p.score ?? 0),
           dashCooldown: Number(p.dashCooldown ?? 0),
         });
       });
