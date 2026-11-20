@@ -19,6 +19,7 @@ export interface PlayerSnapshot {
   avatar: string;
   x: number;
   y: number;
+  z: number;
   vx: number;
   vy: number;
   alive: boolean;
@@ -27,6 +28,8 @@ export interface PlayerSnapshot {
   connected: boolean;
   hasShield: boolean;
   speedBoost: boolean;
+  hasDoubleJump: boolean;
+  hasPushPower: boolean;
   hasBomb: boolean;
   kills: number;
   score: number;
@@ -67,6 +70,9 @@ export interface RoomStateSnapshot {
   round: number;
   level: number;
   startingLevel: number;
+  matchTimeSec: number;
+  shrinkStage: number;
+  finalDuel: boolean;
   disaster: DisasterKind;
   windX: number;
   windY: number;
@@ -248,6 +254,11 @@ export class NetworkManager {
     this.room.send(CLIENT_MESSAGES.DASH);
   }
 
+  sendJump() {
+    if (!this.room) return;
+    this.room.send(CLIENT_MESSAGES.JUMP);
+  }
+
   private attachRoom(room: Room) {
     this.room = room;
     this.reconnectionToken = room.reconnectionToken;
@@ -348,6 +359,7 @@ export class NetworkManager {
           avatar: p.avatar ?? 'cat',
           x: Number(p.x ?? 0),
           y: Number(p.y ?? 0),
+          z: Number(p.z ?? 0),
           vx: Number(p.vx ?? 0),
           vy: Number(p.vy ?? 0),
           alive: Boolean(p.alive),
@@ -356,6 +368,8 @@ export class NetworkManager {
           connected: Boolean(p.connected),
           hasShield: Boolean(p.hasShield),
           speedBoost: Boolean(p.speedBoost),
+          hasDoubleJump: Boolean(p.hasDoubleJump),
+          hasPushPower: Boolean(p.hasPushPower),
           hasBomb: Boolean(p.hasBomb),
           kills: Number(p.kills ?? 0),
           score: Number(p.score ?? 0),
@@ -394,7 +408,7 @@ export class NetworkManager {
         const pu = raw.powerUps[i];
         powerUps.push({
           id: String(pu.id ?? `pu_${i}`),
-          kind: (pu.kind === 'shield' ? 'shield' : 'speed') as PowerUpKind,
+          kind: (pu.kind ?? 'speed') as PowerUpKind,
           x: Number(pu.x ?? 0),
           y: Number(pu.y ?? 0),
         });
@@ -423,6 +437,9 @@ export class NetworkManager {
       round: Number(raw.round ?? 0),
       level: Number(raw.level ?? 1),
       startingLevel: Number(raw.startingLevel ?? 1),
+      matchTimeSec: Number(raw.matchTimeSec ?? 0),
+      shrinkStage: Number(raw.shrinkStage ?? 0),
+      finalDuel: Boolean(raw.finalDuel),
       disaster: (raw.disaster ?? 'none') as DisasterKind,
       windX: Number(raw.windX ?? 0),
       windY: Number(raw.windY ?? 0),

@@ -110,6 +110,10 @@ async function bootstrap() {
       network.sendDash();
     },
 
+    onJump: () => {
+      network.sendJump();
+    },
+
     onPlayAgain: async () => {
       confetti.stop();
       if (
@@ -219,15 +223,31 @@ async function bootstrap() {
     },
 
     onPowerUpPicked: (payload) => {
-      const color = payload.kind === 'shield' ? 0xffd32a : 0x00f5d4;
-      phaser.spawnShockwave(payload.x, payload.y, color, payload.sessionId === network.sessionId ? 0.2 : 0);
+      const color =
+        payload.kind === 'shield'
+          ? 0xffd32a
+          : payload.kind === 'double_jump'
+          ? 0x2ed573
+          : payload.kind === 'push'
+          ? 0xff5252
+          : 0x00f5d4;
+      phaser.spawnShockwave(
+        payload.x,
+        payload.y,
+        color,
+        payload.sessionId === network.sessionId ? 0.2 : 0
+      );
       if (payload.sessionId === network.sessionId) {
-        soundManager.playPowerUp(payload.kind);
-        ui.showToast(
+        soundManager.playPowerUp(payload.kind === 'shield' ? 'shield' : 'speed');
+        const msg =
           payload.kind === 'shield'
-            ? '🛡️ Büyü Kalkanı! 1 kez düşmekten kurtulursun!'
-            : '⚡ Hız İksiri! 4.5 saniye süper hız!'
-        );
+            ? '🛡️ Koruma Kalkanı! 3 saniye düşmeye ve itmeye karşı koruma!'
+            : payload.kind === 'double_jump'
+            ? '🦘 Çift Zıplama! Havada bir kez daha zıplayabilirsin!'
+            : payload.kind === 'push'
+            ? '💥 İtme Gücü! ATIL butonun şok dalgasına dönüştü!'
+            : '⚡ Süper Hız! 5 saniye ekstra hız!';
+        ui.showToast(msg);
       }
     },
 
@@ -278,12 +298,17 @@ async function bootstrap() {
     }
   });
 
-  // Keyboard shortcuts: Space/Shift for Dash, 1-6 for quick emojis
+  // Keyboard shortcuts: Space for Jump/Double-Jump, Shift/E for Dash/Push, 1-6 for emojis
   window.addEventListener('keydown', (e) => {
     if (!network.isConnected) return;
     const tag = document.activeElement?.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-    if (e.code === 'Space' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+    if (e.code === 'Space') {
+      e.preventDefault();
+      network.sendJump();
+      return;
+    }
+    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'KeyE') {
       e.preventDefault();
       network.sendDash();
       return;

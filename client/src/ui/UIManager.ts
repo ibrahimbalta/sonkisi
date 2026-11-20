@@ -29,6 +29,7 @@ export interface UIActions {
   onStartPrivate: () => void;
   onSelectLevel: (level: number) => void;
   onDash: () => void;
+  onJump: () => void;
   onPlayAgain: () => Promise<void>;
   onLeaveRoom: () => Promise<void>;
   onSendEmoji: (emoji: string) => void;
@@ -923,9 +924,17 @@ export class UIManager {
         <button class="emoji-toggle-btn" id="btn-emoji-toggle" style="display:none;">😊</button>
         <div class="emoji-bar" id="emoji-bar">${emojiButtons}</div>
 
-        <!-- DASH ACTION BUTTON -->
+        <!-- DARKNESS EVENT SPOTLIGHT OVERLAY -->
+        <div class="darkness-overlay" id="darkness-overlay" style="display:none;"></div>
+
+        <!-- JUMP & DASH ACTION BUTTONS -->
+        <button class="jump-btn" id="btn-jump" style="display:none;">
+          <span style="font-size:20px;">⬆️</span>
+          <span>ZIPLA</span>
+        </button>
+
         <button class="dash-btn" id="btn-dash" style="display:none;">
-          <span style="font-size:22px;">⚡</span>
+          <span style="font-size:22px;" id="dash-btn-icon">⚡</span>
           <span id="dash-btn-label">ATIL</span>
         </button>
 
@@ -1007,6 +1016,9 @@ export class UIManager {
     document.getElementById('btn-dash')?.addEventListener('click', () => {
       this.actions.onDash();
     });
+    document.getElementById('btn-jump')?.addEventListener('click', () => {
+      this.actions.onJump();
+    });
 
     const joyBase = document.getElementById('joystick-zone');
     const joyKnob = document.getElementById('joystick-knob');
@@ -1051,31 +1063,45 @@ export class UIManager {
         !isLobby && !amAlive && this.spectating && !this.winnerInfo ? 'flex' : 'none';
     }
 
-    // Update Dash button & active Power-Up badges
+    // Update Jump, Dash, Darkness & active Power-Up badges
     const dashBtn = document.getElementById('btn-dash');
+    const dashIcon = document.getElementById('dash-btn-icon');
     const dashLabel = document.getElementById('dash-btn-label');
+    const jumpBtn = document.getElementById('btn-jump');
+    const darkOverlay = document.getElementById('darkness-overlay');
+    const showActions = (amAlive || isLobby) && state.phase !== 'finished';
+
+    if (jumpBtn) {
+      jumpBtn.style.display = showActions ? 'flex' : 'none';
+    }
     if (dashBtn) {
-      // On narrow mobile lobby, keep controls cleanly above/clear of lobby panel
-      const showDash = (amAlive || isLobby) && state.phase !== 'finished';
-      dashBtn.style.display = showDash ? 'flex' : 'none';
+      dashBtn.style.display = showActions ? 'flex' : 'none';
       const cd = me?.dashCooldown ?? 0;
       dashBtn.classList.toggle('cooldown', cd > 0.05);
+      dashBtn.classList.toggle('push-ready', Boolean(me?.hasPushPower) && cd <= 0.05);
+      if (dashIcon) dashIcon.textContent = me?.hasPushPower ? '💥' : '⚡';
       if (dashLabel) {
-        dashLabel.textContent = cd > 0.05 ? `${cd.toFixed(1)}s` : 'ATIL';
+        dashLabel.textContent = cd > 0.05 ? `${cd.toFixed(1)}s` : me?.hasPushPower ? 'İT!' : 'ATIL';
       }
+    }
+    if (darkOverlay) {
+      darkOverlay.style.display = !isLobby && state.disaster === 'darkness' ? 'block' : 'none';
     }
 
     const puBadges = document.getElementById('powerup-badges');
     if (puBadges) {
       const pills: string[] = [];
-      if (me?.alive && me.hasBomb) {
-        pills.push('<div class="pu-pill bomb">💣 BOMBA SENDE! BİRİNE DOKUN!</div>');
-      }
       if (me?.alive && me.hasShield) {
-        pills.push('<div class="pu-pill">🛡️ BÜYÜ KALKANI</div>');
+        pills.push('<div class="pu-pill">🛡️ KALKAN (3s)</div>');
       }
       if (me?.alive && me.speedBoost) {
-        pills.push('<div class="pu-pill speed">⚡ HIZ İKSİRİ</div>');
+        pills.push('<div class="pu-pill speed">⚡ SÜPER HIZ (5s)</div>');
+      }
+      if (me?.alive && me.hasDoubleJump) {
+        pills.push('<div class="pu-pill" style="border-color:#2ed573;color:#2ed573;">🦘 ÇİFT ZIPLAMA</div>');
+      }
+      if (me?.alive && me.hasPushPower) {
+        pills.push('<div class="pu-pill bomb">💥 İTME GÜCÜ</div>');
       }
       if (me && me.kills > 0) {
         pills.push(`<div class="pu-pill">🔥 ${me.kills} Eleme</div>`);
@@ -1262,65 +1288,51 @@ export class UIManager {
     }
 
     if (bannerEl) {
-      if (
-        (state.phase === 'scramble' ||
-          state.phase === 'warning' ||
-          state.phase === 'drop') &&
-        state.safeColor >= 0
-      ) {
-        const colorDef = getTileColorById(state.safeColor);
+      if (state.phase === 'scramble') {
+        const mins = Math.floor(state.matchTimeSec / 60);
+        const secs = Math.floor(state.matchTimeSec % 60);
+        const clock = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        const hasEvent = state.disaster && state.disaster !== 'none';
+        const d = DISASTERS[state.disaster] ?? DISASTERS.none;
+
         bannerEl.style.display = 'block';
-        bannerEl.style.borderColor = colorDef.hex;
+        bannerEl.style.borderColor = state.finalDuel
+          ? '#FF4757'
+          : hasEvent
+          ? d.color
+          : '#FFD32A';
 
         if (labelEl) {
-          labelEl.textContent =
-            state.phase === 'drop'
-              ? '💥 TEHLİKELİ RENKLER DÜŞTÜ!'
-              : state.phase === 'warning'
-              ? '⚠️ BASILAN TAŞLAR DÜŞÜYOR!'
-              : '🌟 BONUS RENK (+15 PUAN)';
+          labelEl.textContent = state.finalDuel
+            ? '🔥 SON 2 OYUNCU — FİNAL!'
+            : state.shrinkStage > 0
+            ? `⚠️ ARENA KÜÇÜLDÜ (${state.shrinkStage}/3)`
+            : '🏃 BASTIĞIN KARE 2s SONRA KAYBOLUR!';
         }
         if (swatchEl) {
-          swatchEl.style.background = colorDef.hex;
-          swatchEl.textContent = colorDef.symbol;
+          swatchEl.style.background = hasEvent ? d.color : '#2ED573';
+          swatchEl.textContent = hasEvent ? d.icon : '⏱️';
         }
         if (nameEl) {
-          nameEl.textContent = colorDef.name;
-          nameEl.style.color = colorDef.hex;
+          nameEl.textContent = clock;
+          nameEl.style.color = '#FFFFFF';
         }
         if (fillEl) {
-          const pct =
-            state.phase === 'drop'
-              ? 0
-              : Math.max(
-                  0,
-                  Math.min(100, (state.phaseTimeLeft / Math.max(0.1, state.phaseDuration)) * 100)
-                );
-          fillEl.style.width = `${pct}%`;
-          fillEl.style.background = colorDef.hex;
+          const nextShrink =
+            state.shrinkStage === 0 ? 30 : state.shrinkStage === 1 ? 60 : 90;
+          const pct = Math.max(
+            0,
+            Math.min(100, ((nextShrink - state.matchTimeSec) / 30) * 100)
+          );
+          fillEl.style.width = `${state.shrinkStage >= 3 ? 100 : pct}%`;
+          fillEl.style.background = state.shrinkStage >= 3 ? '#FF4757' : '#FFD32A';
         }
         if (numEl) {
           numEl.textContent =
-            state.phase === 'drop'
-              ? amAlive
-                ? '✓ GÜVENDESİN!'
-                : 'ELENDİN!'
-              : `${state.phaseTimeLeft.toFixed(1)}s`;
+            state.shrinkStage >= 3
+              ? 'SON PLATFORM!'
+              : `Küçülme: ${Math.max(0, Math.ceil((state.shrinkStage + 1) * 30 - state.matchTimeSec))}s`;
         }
-      } else if (state.phase === 'round_end') {
-        bannerEl.style.display = 'block';
-        bannerEl.style.borderColor = '#2ED573';
-        if (labelEl) labelEl.textContent = '✨ HARİKA!';
-        if (swatchEl) {
-          swatchEl.style.background = '#2ED573';
-          swatchEl.textContent = '✓';
-        }
-        if (nameEl) {
-          nameEl.textContent = 'YENİ TUR!';
-          nameEl.style.color = '#2ED573';
-        }
-        if (fillEl) fillEl.style.width = '100%';
-        if (numEl) numEl.textContent = 'Kareler yenileniyor...';
       } else {
         bannerEl.style.display = 'none';
       }
@@ -1331,50 +1343,45 @@ export class UIManager {
     const slot = document.getElementById('result-slot');
     if (!slot) return;
 
-    // 1. Winner Screen (highest priority when match ends)
+    // 1. Winner Screen with Top 3 Podium!
     if (this.winnerInfo) {
       const w = this.winnerInfo;
       const isMe = w.winnerSessionId === this.localSessionId;
       const winnerChar = getCharacterById(w.winnerAvatar);
+      const medals = ['🥇', '🥈', '🥉'];
+      const podiumHtml = (w.podium ?? [])
+        .map((p, idx) => {
+          const ch = getCharacterById(p.avatar);
+          return `
+            <div class="podium-row ${idx === 0 ? 'first' : ''}">
+              <span>${medals[idx] ?? `#${p.rank}`} ${ch.emoji} ${escapeHtml(p.name)}</span>
+              <span style="color:var(--gold);">⭐ ${p.score} ${p.kills > 0 ? `• 🔥${p.kills}` : ''}</span>
+            </div>
+          `;
+        })
+        .join('');
 
-      if (isMe) {
-        slot.innerHTML = `
-          <div class="modal-backdrop">
-            <div class="modal-card">
-              <div class="result-icon">👑</div>
-              <div class="result-title win">KAZANDIN!</div>
-              <div class="result-sub">SON KİŞİ SENSİN! Arenayı fethettin! 🎉</div>
-              <div class="stats-row">
-                <div class="stat-box"><div class="stat-val">#1</div><div class="stat-lbl">Sıralama</div></div>
-                <div class="stat-box"><div class="stat-val">+${w.pointsAwarded}</div><div class="stat-lbl">Puan</div></div>
-                <div class="stat-box"><div class="stat-val">${w.roundsPlayed}</div><div class="stat-lbl">Tur</div></div>
-              </div>
-              <div class="stack">
-                <button class="btn btn-play" style="font-size:20px;padding:13px;" id="btn-res-again">🔄 Tekrar Oyna</button>
-                <button class="btn btn-gold" id="btn-res-share">📣 Zaferini Paylaş</button>
-                <button class="btn btn-ghost" id="btn-res-menu">🏠 Ana Menü</button>
-              </div>
+      slot.innerHTML = `
+        <div class="modal-backdrop">
+          <div class="modal-card">
+            <div class="result-icon">${isMe ? '👑' : winnerChar.emoji}</div>
+            <div class="result-title win">${isMe ? 'KAZANDIN!' : 'OYUN BİTTİ!'}</div>
+            <div class="result-sub">
+              ${
+                isMe
+                  ? 'SON KALAN SENSİN! Arenanın şampiyonusun! 🎉'
+                  : `👑 Şampiyon: <strong style="color:#fff;">${escapeHtml(w.winnerName)}</strong> (${winnerChar.name})`
+              }
+            </div>
+            <div class="podium-list">${podiumHtml}</div>
+            <div class="stack">
+              <button class="btn btn-play" style="font-size:20px;padding:13px;" id="btn-res-again">🔄 Yeniden Oyna</button>
+              <button class="btn btn-gold" id="btn-res-share">📣 ${isMe ? 'Zaferini Paylaş' : 'Arkadaşına Meydan Oku'}</button>
+              <button class="btn btn-ghost" id="btn-res-menu">🏠 Lobiye Dön</button>
             </div>
           </div>
-        `;
-      } else {
-        slot.innerHTML = `
-          <div class="modal-backdrop">
-            <div class="modal-card">
-              <div class="result-icon">${winnerChar.emoji}</div>
-              <div class="result-title win" style="font-size:28px;">OYUN BİTTİ!</div>
-              <div class="result-sub">
-                👑 Kazanan: <strong style="color:#fff;">${escapeHtml(w.winnerName)}</strong>
-              </div>
-              <div class="stack">
-                <button class="btn btn-play" style="font-size:20px;padding:13px;" id="btn-res-again">🔄 Tekrar Oyna</button>
-                <button class="btn btn-blue" id="btn-res-challenge">⚔️ Arkadaşına Meydan Oku</button>
-                <button class="btn btn-ghost" id="btn-res-menu">🏠 Ana Menü</button>
-              </div>
-            </div>
-          </div>
-        `;
-      }
+        </div>
+      `;
 
       document.getElementById('btn-res-again')?.addEventListener('click', () => {
         soundManager.playClick();
@@ -1387,13 +1394,9 @@ export class UIManager {
       document.getElementById('btn-res-share')?.addEventListener('click', () => {
         soundManager.playClick();
         this.shareText(
-          `👑 SON KİŞİ'de ${w.totalPlayers} kişi arasından 1. oldum ve +${w.pointsAwarded} puan kazandım! Beni yenebilir misin?`
-        );
-      });
-      document.getElementById('btn-res-challenge')?.addEventListener('click', () => {
-        soundManager.playClick();
-        this.shareText(
-          `⚔️ SON KİŞİ arenasında sana meydan okuyorum! Herkes elenir, bir kişi kazanır!`
+          isMe
+            ? `👑 SON KALAN'da ${w.totalPlayers} kişi arasından 1. oldum ve ${w.pointsAwarded} puan kazandım! Beni yenebilir misin?`
+            : `⚔️ SON KALAN arenasında sana meydan okuyorum! Bastığın kare 2 saniyede kaybolur!`
         );
       });
       return;

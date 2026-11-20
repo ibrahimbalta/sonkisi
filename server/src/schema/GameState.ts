@@ -7,6 +7,7 @@ export class Player extends Schema {
   @type('string') avatar: string = 'dragon';
   @type('number') x: number = 0;
   @type('number') y: number = 0;
+  @type('number') z: number = 0; // Jump height (0 = ground, >0 = airborne)
   @type('number') vx: number = 0;
   @type('number') vy: number = 0;
   @type('boolean') alive: boolean = true;
@@ -15,10 +16,19 @@ export class Player extends Schema {
   @type('boolean') connected: boolean = true;
   @type('boolean') hasShield: boolean = false;
   @type('boolean') speedBoost: boolean = false;
+  @type('boolean') hasDoubleJump: boolean = false;
+  @type('boolean') hasPushPower: boolean = false;
   @type('boolean') hasBomb: boolean = false;
   @type('number') kills: number = 0;
   @type('number') score: number = 0;
   @type('number') dashCooldown: number = 0;
+}
+
+export class PowerUp extends Schema {
+  @type('string') id: string = '';
+  @type('string') kind: string = 'speed'; // 'speed' | 'shield' | 'double_jump' | 'push'
+  @type('number') x: number = 0;
+  @type('number') y: number = 0;
 }
 
 export class Meteor extends Schema {
@@ -27,13 +37,6 @@ export class Meteor extends Schema {
   @type('number') y: number = 0;
   @type('number') radius: number = 72;
   @type('number') timeLeft: number = 1.45;
-}
-
-export class PowerUp extends Schema {
-  @type('string') id: string = '';
-  @type('string') kind: string = 'speed'; // 'speed' | 'shield'
-  @type('number') x: number = 0;
-  @type('number') y: number = 0;
 }
 
 export class Obstacle extends Schema {
@@ -55,6 +58,9 @@ export class GameState extends Schema {
   @type('number') round: number = 0;
   @type('number') level: number = 1;
   @type('number') startingLevel: number = 1;
+  @type('number') matchTimeSec: number = 0;
+  @type('number') shrinkStage: number = 0;
+  @type('boolean') finalDuel: boolean = false;
   @type('string') disaster: string = 'none';
   @type('number') windX: number = 0;
   @type('number') windY: number = 0;
@@ -68,6 +74,7 @@ export class GameState extends Schema {
   @type('string') winnerSessionId: string = '';
   @type('string') winnerName: string = '';
   @type('string') winnerAvatar: string = '';
+  // Tile values: -1 = dropped, 0..5 = intact color, 10..15 = cracking (2s), 20..25 = electrified!
   @type(['int8']) tiles = new ArraySchema<number>();
   @type([Obstacle]) obstacles = new ArraySchema<Obstacle>();
   @type([PowerUp]) powerUps = new ArraySchema<PowerUp>();

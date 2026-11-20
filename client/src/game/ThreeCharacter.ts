@@ -146,6 +146,7 @@ export class ThreeCharacter {
   public group: THREE.Group;
   public targetX: number;
   public targetZ: number;
+  public targetJumpY = 0;
   public vx = 0;
   public vy = 0;
   public alive = true;
@@ -527,9 +528,10 @@ export class ThreeCharacter {
     }
   }
 
-  public setTarget(x: number, z: number, vx: number, vy: number, alive: boolean) {
+  public setTarget(x: number, z: number, vx: number, vy: number, alive: boolean, jumpZ = 0) {
     this.targetX = x;
     this.targetZ = z;
+    this.targetJumpY = jumpZ * 1.15;
     this.vx = vx;
     this.vy = vy;
 
@@ -639,6 +641,12 @@ export class ThreeCharacter {
     const lerp = Math.min(1, dt * 15);
     this.group.position.x += (this.targetX - this.group.position.x) * lerp;
     this.group.position.z += (this.targetZ - this.group.position.z) * lerp;
+    this.group.position.y += (this.targetJumpY - this.group.position.y) * Math.min(1, dt * 18);
+
+    // Keep locator ring flat near tile surface so player sees landing spot during jump!
+    if (this.localRing) {
+      this.localRing.position.y = Math.max(-this.group.position.y + 0.05, -3.5);
+    }
 
     const speed = Math.hypot(this.vx, this.vy);
     if (speed > 0.08) {

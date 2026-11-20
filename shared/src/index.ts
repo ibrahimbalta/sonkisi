@@ -273,11 +273,12 @@ export const CLIENT_MESSAGES = {
   PLAY_AGAIN: 'play_again',
   SELECT_LEVEL: 'select_level',
   DASH: 'dash',
+  JUMP: 'jump',
 } as const;
 
-export type PowerUpKind = 'speed' | 'shield';
+export type PowerUpKind = 'speed' | 'shield' | 'double_jump' | 'push';
 
-export type DisasterKind = 'none' | 'meteor' | 'ice' | 'bomb' | 'wind';
+export type DisasterKind = 'none' | 'electric' | 'meteor' | 'wind' | 'darkness';
 
 export interface DisasterDef {
   id: DisasterKind;
@@ -290,40 +291,59 @@ export interface DisasterDef {
 export const DISASTERS: Record<DisasterKind, DisasterDef> = {
   none: {
     id: 'none',
-    name: 'Normal Tur',
+    name: 'Normal',
     icon: '✨',
-    description: 'Güvenli renge koş!',
+    description: 'Bastığın kare 2 saniye sonra kaybolur!',
     color: '#2ED573',
+  },
+  electric: {
+    id: 'electric',
+    name: 'ELEKTRİKLİ KARELER',
+    icon: '⚡',
+    description: 'Parlayan elektrikli karelerden uzak dur, seni savurur!',
+    color: '#00F5D4',
   },
   meteor: {
     id: 'meteor',
     name: 'METEOR YAĞMURU',
     icon: '☄️',
-    description: 'Kırmızı halkalardan kaç, göktaşları savurur!',
+    description: 'Kırmızı halkalardan kaç, meteorlar kareleri parçalar!',
     color: '#FF4757',
-  },
-  ice: {
-    id: 'ice',
-    name: 'BUZ ZEMİNİ',
-    icon: '🧊',
-    description: 'Arena buz gibi kaygan, dikkatli fren yap!',
-    color: '#48DBFB',
-  },
-  bomb: {
-    id: 'bomb',
-    name: 'SICAK BOMBA',
-    icon: '💣',
-    description: 'Bomba sendeyse başkasına dokunup devret!',
-    color: '#FFA502',
   },
   wind: {
     id: 'wind',
-    name: 'FIRTINA RÜZGARI',
+    name: 'KASIRGA',
     icon: '🌪️',
-    description: 'Güçlü rüzgar herkesi kenara sürüklüyor!',
+    description: 'Şiddetli kasırga herkesi kenara sürüklüyor!',
     color: '#A55EEA',
   },
+  darkness: {
+    id: 'darkness',
+    name: 'GÖRÜŞ AZALMASI',
+    icon: '🌑',
+    description: 'Karanlık çöktü! Bastığın yere dikkat et!',
+    color: '#747D8C',
+  },
 };
+
+export const SURVIVAL_CONFIG = {
+  TILE_CRACK_SEC: 2.0,
+  SHRINK_STAGE_1_SEC: 30,
+  SHRINK_STAGE_2_SEC: 60,
+  SHRINK_STAGE_3_SEC: 90,
+  EVENT_INTERVAL_SEC: 20,
+  EVENT_DURATION_SEC: 10,
+  SHIELD_DURATION_SEC: 3.0,
+  SPEED_DURATION_SEC: 5.0,
+  DOUBLE_JUMP_DURATION_SEC: 12.0,
+  PUSH_DURATION_SEC: 10.0,
+  POWERUP_SPAWN_INTERVAL_SEC: 7.5,
+  POINTS_FIRST: 500,
+  POINTS_SECOND: 250,
+  POINTS_THIRD: 150,
+  POINTS_PER_10_SEC: 20,
+  POINTS_PER_KILL: 50,
+} as const;
 
 export const DASH_CONFIG = {
   COOLDOWN_SEC: 3.5,
@@ -528,6 +548,15 @@ export interface EliminatedPayload {
   roundsSurvived: number;
 }
 
+export interface PodiumEntry {
+  rank: number;
+  sessionId: string;
+  name: string;
+  avatar: string;
+  score: number;
+  kills: number;
+}
+
 export interface MatchWinnerPayload {
   winnerSessionId: string;
   winnerName: string;
@@ -535,6 +564,8 @@ export interface MatchWinnerPayload {
   pointsAwarded: number;
   totalPlayers: number;
   roundsPlayed: number;
+  matchDurationSec: number;
+  podium: PodiumEntry[];
 }
 
 export const FUNNY_ELIMINATION_QUIPS = [

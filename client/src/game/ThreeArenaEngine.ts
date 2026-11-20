@@ -36,6 +36,7 @@ interface Tile3D {
   baseZ: number;
   colorId: number;
   cracking: boolean;
+  electrified: boolean;
   dropped: boolean;
   velY: number;
   rotVx: number;
@@ -401,6 +402,7 @@ export class ThreeArenaEngine {
           baseZ: bz,
           colorId,
           cracking: false,
+          electrified: false,
           dropped: false,
           velY: 0,
           rotVx: 0,
@@ -660,7 +662,14 @@ export class ThreeArenaEngine {
         const pos = this.serverToWorld(pu.x, pu.y);
         g.position.set(pos.x, 1.05, pos.z);
 
-        const color = pu.kind === 'shield' ? 0xffd32a : 0x00f5d4;
+        const color =
+          pu.kind === 'shield'
+            ? 0xffd32a
+            : pu.kind === 'double_jump'
+            ? 0x2ed573
+            : pu.kind === 'push'
+            ? 0xff5252
+            : 0x00f5d4;
         const crystal = new THREE.Mesh(
           new THREE.OctahedronGeometry(0.55, 0),
           new THREE.MeshStandardMaterial({
@@ -926,15 +935,23 @@ export class ThreeArenaEngine {
       this.updateCornerCrystalColor(0x00e5ff);
     }
 
-    // Update 144 3D tiles (supports intact 0..5, cracking 10..15, dropped -1)
+    // Update 144 3D tiles (intact 0..5, cracking 10..15, electrified 20..25, dropped -1)
     for (let i = 0; i < this.tiles.length && i < state.tiles.length; i++) {
       const tile = this.tiles[i];
       const rawVal = state.tiles[i];
       const isDropped = rawVal === -1;
-      const isCracking = rawVal >= 10;
-      const newColor = isDropped ? -1 : isCracking ? rawVal - 10 : rawVal;
+      const isElectrified = rawVal >= 20;
+      const isCracking = rawVal >= 10 && rawVal < 20;
+      const newColor = isDropped
+        ? -1
+        : isElectrified
+        ? rawVal - 20
+        : isCracking
+        ? rawVal - 10
+        : rawVal;
 
       tile.cracking = isCracking;
+      tile.electrified = isElectrified;
 
       if (tile.colorId !== newColor || tile.dropped !== isDropped) {
         this.setTileColorAndState(tile, newColor, isDropped, true);
@@ -942,19 +959,23 @@ export class ThreeArenaEngine {
 
       if (!isDropped) {
         const mat = tile.mesh.material as THREE.MeshStandardMaterial;
-        if (isCracking) {
+        if (isElectrified) {
+          mat.emissive.setHex(0x00f5d4);
+          mat.emissiveIntensity = 1.1;
+        } else if (isCracking) {
+          mat.emissive.setHex(0xff6b35);
           mat.emissiveIntensity = 0.72;
-        } else if (
-          (state.phase === 'scramble' || state.phase === 'warning') &&
-          newColor === state.safeColor
-        ) {
-          mat.emissiveIntensity = 0.42;
-        } else if (state.phase === 'warning' && newColor !== state.safeColor) {
-          mat.emissiveIntensity = 0.25;
         } else {
+          const def = getTileColorById(newColor);
+          mat.emissive.setHex(def.num);
           mat.emissiveIntensity = 0.08;
         }
       }
+    }
+
+    // Thick magical fog during Darkness event!
+    if (this.scene.fog instanceof THREE.FogExp2) {
+      this.scene.fog.density = state.disaster === 'darkness' ? 0.032 : 0.0085;
     }
 
     // Sync 3D characters
@@ -976,7 +997,7 @@ export class ThreeArenaEngine {
       }
 
       const wasAlive = char.alive;
-      char.setTarget(pos.x, pos.z, p.vx, p.vy, p.alive);
+      char.setTarget(pos.x, pos.z, p.vx, p.vy, p.alive, p.z);
       char.setEffects(p.hasShield, p.speedBoost, p.hasBomb);
       if (wasAlive && !p.alive && id === this.localSessionId) {
         soundManager.playFall();

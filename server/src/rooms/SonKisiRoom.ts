@@ -18,8 +18,11 @@ import {
   EmojiBroadcast,
   EmojiPayload,
   InputPayload,
+  PodiumEntry,
+  PowerUpKind,
   REACTION_EMOJIS,
   SERVER_MESSAGES,
+  SURVIVAL_CONFIG,
   TILE_COLORS,
 } from '../../../shared/src/index';
 
@@ -65,19 +68,30 @@ export class SonKisiRoom extends Room<GameState> {
 
   private inputs = new Map<string, PlayerInput>();
   private knockbacks = new Map<string, KnockbackVel>();
-  private iceVelocities = new Map<string, { vx: number; vy: number }>();
+  private verticalVel = new Map<string, number>();
+  private jumpsUsed = new Map<string, number>();
   private lastPushedBy = new Map<string, { pusherId: string; at: number }>();
-  private bombTransferCooldown = new Map<string, number>();
   private dashTimers = new Map<string, { timeLeft: number; dx: number; dy: number }>();
-  private speedBoostTimers = new Map<string, number>();
-  private shieldProtectedThisDrop = new Set<string>();
+  private shieldTimers = new Map<string, number>();
+  private speedTimers = new Map<string, number>();
+  private doubleJumpTimers = new Map<string, number>();
+  private pushPowerTimers = new Map<string, number>();
   private tileCrackTimers = new Map<number, number>();
-  private meteorSpawnTimer = 0;
+  private electricTileIndices = new Set<number>();
+  private electricShockCooldown = new Map<string, number>();
+
   private obstacleMotions: ObstacleMotion[] = [];
   private elapsedSec = 0;
   private lastEmojiTime = new Map<string, number>();
   private phaseTimer = 0;
   private isSoloPractice = false;
+
+  // Survival mode timers
+  private lastSurvivalPointBucket = 0;
+  private nextEventAtSec = SURVIVAL_CONFIG.EVENT_INTERVAL_SEC;
+  private eventEndAtSec = 0;
+  private meteorSpawnTimer = 0;
+  private powerUpSpawnTimer = 4;
 
   onCreate(options: JoinOptions) {
     this.setState(new GameState());
@@ -103,7 +117,7 @@ export class SonKisiRoom extends Room<GameState> {
     this.state.level = 1;
     this.state.startingLevel = 1;
 
-    this.generateTiles(1);
+    this.generateTiles();
     this.obstacleMotions = buildObstaclesForLevel(1, this.state.obstacles);
 
     this.onMessage(CLIENT_MESSAGES.INPUT, (client, payload: InputPayload) => {
@@ -128,7 +142,7 @@ export class SonKisiRoom extends Room<GameState> {
 
       const now = Date.now();
       const last = this.lastEmojiTime.get(client.sessionId) ?? 0;
-      if (now - last < 1000) return; // Rate limit
+      if (now - last < 1000) return;
       this.lastEmojiTime.set(client.sessionId, now);
 
       const broadcastPayload: EmojiBroadcast = {
@@ -163,9 +177,35 @@ export class SonKisiRoom extends Room<GameState> {
       this.state.startingLevel = lv;
       this.state.level = lv;
       this.obstacleMotions = buildObstaclesForLevel(lv, this.state.obstacles);
-      this.generateTiles(1);
+      this.generateTiles();
     });
 
+    // Authoritative JUMP + DOUBLE-JUMP
+    this.onMessage(CLIENT_MESSAGES.JUMP, (client) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player || !player.alive) return;
+      if (this.state.phase === 'starting' || this.state.phase === 'finished') return;
+
+      const used = this.jumpsUsed.get(client.sessionId) ?? 0;
+      const maxJumps = player.hasDoubleJump ? 2 : 1;
+
+      if (player.z <= 0.08) {
+        // Ground jump
+        this.verticalVel.set(client.sessionId, 14.5);
+        this.jumpsUsed.set(client.sessionId, 1);
+      } else if (used < maxJumps) {
+        // Mid-air Double Jump!
+        this.verticalVel.set(client.sessionId, 13.8);
+        this.jumpsUsed.set(client.sessionId, used + 1);
+        this.broadcast(SERVER_MESSAGES.PLAYER_DASHED, {
+          sessionId: client.sessionId,
+          x: player.x,
+          y: player.y,
+        });
+      }
+    });
+
+    // Authoritative DASH + Integrated PUSH POWER shockwave!
     this.onMessage(CLIENT_MESSAGES.DASH, (client) => {
       const player = this.state.players.get(client.sessionId);
       if (!player || !player.alive) return;
@@ -176,7 +216,6 @@ export class SonKisiRoom extends Room<GameState> {
       let dy = input?.dy ?? 0;
       const len = Math.hypot(dx, dy);
       if (len < 0.1) {
-        // Dash forward in last velocity or default upward
         dx = 0;
         dy = -1;
       } else {
@@ -190,6 +229,25 @@ export class SonKisiRoom extends Room<GameState> {
         dx,
         dy,
       });
+
+      // If Push Power is active, unleash a 360° Shockwave Push Blast!
+      if (player.hasPushPower) {
+        this.state.players.forEach((other) => {
+          if (!other.alive || other.sessionId === player.sessionId) return;
+          const ox = other.x - player.x;
+          const oy = other.y - player.y;
+          const dist = Math.hypot(ox, oy);
+          if (dist < 175 && dist > 0.1) {
+            const nx = ox / dist;
+            const ny = oy / dist;
+            this.knockbacks.set(other.sessionId, { vx: nx * 740, vy: ny * 740 });
+            this.lastPushedBy.set(other.sessionId, {
+              pusherId: player.sessionId,
+              at: this.elapsedSec,
+            });
+          }
+        });
+      }
 
       this.broadcast(SERVER_MESSAGES.PLAYER_DASHED, {
         sessionId: client.sessionId,
@@ -218,9 +276,12 @@ export class SonKisiRoom extends Room<GameState> {
     const spawn = this.getRandomSpawn();
     player.x = spawn.x;
     player.y = spawn.y;
+    player.z = 0;
 
     this.state.players.set(client.sessionId, player);
     this.inputs.set(client.sessionId, { dx: 0, dy: 0 });
+    this.verticalVel.set(client.sessionId, 0);
+    this.jumpsUsed.set(client.sessionId, 0);
 
     if (!this.state.hostSessionId) {
       this.state.hostSessionId = client.sessionId;
@@ -228,10 +289,6 @@ export class SonKisiRoom extends Room<GameState> {
 
     this.recountAlive();
     this.checkLobbyStartCondition();
-
-    console.log(
-      `[SonKisiRoom ${this.state.roomCode}] ${player.name} (${client.sessionId}) joined. Players: ${this.state.players.size}/${this.maxClients}`
-    );
   }
 
   async onLeave(client: Client, consented: boolean) {
@@ -245,15 +302,22 @@ export class SonKisiRoom extends Room<GameState> {
       if (!consented && this.state.phase !== 'finished') {
         await this.allowReconnection(client, 15);
         player.connected = true;
-        console.log(`[SonKisiRoom ${this.state.roomCode}] ${player.name} reconnected!`);
         return;
       }
     } catch {
-      // Reconnection timed out
+      // Timed out
+    }
+
+    // If they leave mid-match while alive, mark eliminated cleanly so podium stays accurate
+    if (this.state.phase === 'scramble' && player.alive) {
+      player.alive = false;
+      player.eliminatedRank = this.state.aliveCount;
     }
 
     this.state.players.delete(client.sessionId);
     this.inputs.delete(client.sessionId);
+    this.verticalVel.delete(client.sessionId);
+    this.jumpsUsed.delete(client.sessionId);
     this.lastEmojiTime.delete(client.sessionId);
 
     if (this.state.hostSessionId === client.sessionId) {
@@ -272,12 +336,7 @@ export class SonKisiRoom extends Room<GameState> {
       this.state.phaseTimeLeft = 0;
       this.state.phaseDuration = 0;
       this.phaseTimer = 0;
-    } else if (
-      this.state.phase === 'scramble' ||
-      this.state.phase === 'warning' ||
-      this.state.phase === 'drop' ||
-      this.state.phase === 'round_end'
-    ) {
+    } else if (this.state.phase === 'scramble') {
       this.checkWinCondition();
     }
   }
@@ -305,57 +364,37 @@ export class SonKisiRoom extends Room<GameState> {
     return { x: ARENA_WIDTH / 2, y: ARENA_HEIGHT / 2 };
   }
 
-  private generateTiles(round: number) {
+  private generateTiles() {
     const cols = ARENA_CONFIG.GRID_COLS;
     const rows = ARENA_CONFIG.GRID_ROWS;
     const total = cols * rows;
     const colorCount = TILE_COLORS.length;
     const arr: number[] = new Array(total);
-    const activeIndices: number[] = [];
 
     for (let row = 0; row < rows; row++) {
       for (let col = 0; col < cols; col++) {
         const i = row * cols + col;
         if (isTileActiveInLevel(this.state.level, row, col)) {
           arr[i] = Math.floor(Math.random() * colorCount);
-          activeIndices.push(i);
         } else {
-          arr[i] = -1; // Level cutout / abyss pit!
-        }
-      }
-    }
-
-    // Ensure every color appears enough times among active tiles
-    const minPerColor = Math.max(4, Math.min(12, Math.floor(activeIndices.length / 9) - Math.floor((round - 1) * 0.6)));
-    for (let c = 0; c < colorCount; c++) {
-      let count = activeIndices.filter((idx) => arr[idx] === c).length;
-      while (count < minPerColor && activeIndices.length > colorCount) {
-        const idx = activeIndices[Math.floor(Math.random() * activeIndices.length)];
-        if (arr[idx] !== c) {
-          arr[idx] = c;
-          count++;
+          arr[i] = -1;
         }
       }
     }
 
     if (this.state.tiles.length !== total) {
       this.state.tiles.clear();
-      for (let i = 0; i < total; i++) {
-        this.state.tiles.push(arr[i]);
-      }
+      for (let i = 0; i < total; i++) this.state.tiles.push(arr[i]);
     } else {
-      for (let i = 0; i < total; i++) {
-        this.state.tiles[i] = arr[i];
-      }
+      for (let i = 0; i < total; i++) this.state.tiles[i] = arr[i];
     }
   }
 
   private checkLobbyStartCondition() {
     if (this.state.phase !== 'lobby') return;
-    if (this.state.isPrivate) return; // Private rooms start when host presses Start
+    if (this.state.isPrivate) return;
 
     if (this.state.players.size >= this.maxClients) {
-      // Room is full! Start immediately with 3s countdown
       this.startStartingPhase();
       return;
     }
@@ -371,12 +410,40 @@ export class SonKisiRoom extends Room<GameState> {
   private startStartingPhase() {
     this.lock();
     this.state.phase = 'starting';
-    this.state.round = 0;
+    this.state.round = 1;
+    this.state.level = this.state.startingLevel;
+    this.state.matchTimeSec = 0;
+    this.state.shrinkStage = 0;
+    this.state.finalDuel = false;
     this.state.safeColor = -1;
+    this.state.disaster = 'none';
+    this.state.windX = 0;
+    this.state.windY = 0;
     this.state.winnerSessionId = '';
     this.state.winnerName = '';
     this.state.winnerAvatar = '';
     this.state.totalMatchPlayers = this.state.players.size;
+
+    this.dashTimers.clear();
+    this.knockbacks.clear();
+    this.shieldTimers.clear();
+    this.speedTimers.clear();
+    this.doubleJumpTimers.clear();
+    this.pushPowerTimers.clear();
+    this.tileCrackTimers.clear();
+    this.electricTileIndices.clear();
+    this.electricShockCooldown.clear();
+    this.lastPushedBy.clear();
+    this.state.powerUps.clear();
+    this.state.meteors.clear();
+
+    this.lastSurvivalPointBucket = 0;
+    this.nextEventAtSec = SURVIVAL_CONFIG.EVENT_INTERVAL_SEC;
+    this.eventEndAtSec = 0;
+    this.powerUpSpawnTimer = 3.0;
+
+    this.generateTiles();
+    this.obstacleMotions = buildObstaclesForLevel(this.state.level, this.state.obstacles);
 
     this.state.players.forEach((p) => {
       p.alive = true;
@@ -384,251 +451,33 @@ export class SonKisiRoom extends Room<GameState> {
       p.roundsSurvived = 0;
       p.hasShield = false;
       p.speedBoost = false;
+      p.hasDoubleJump = false;
+      p.hasPushPower = false;
       p.hasBomb = false;
       p.kills = 0;
       p.score = 0;
       p.dashCooldown = 0;
+      p.z = 0;
+      this.verticalVel.set(p.sessionId, 0);
+      this.jumpsUsed.set(p.sessionId, 0);
       const spawn = this.getRandomSpawn();
       p.x = spawn.x;
       p.y = spawn.y;
     });
 
-    this.dashTimers.clear();
-    this.speedBoostTimers.clear();
-    this.shieldProtectedThisDrop.clear();
-    this.tileCrackTimers.clear();
-    this.iceVelocities.clear();
-    this.lastPushedBy.clear();
-    this.bombTransferCooldown.clear();
-    this.state.powerUps.clear();
-    this.state.meteors.clear();
-    this.state.disaster = 'none';
-    this.state.windX = 0;
-    this.state.windY = 0;
-
     this.recountAlive();
-    this.generateTiles(1);
-
     this.phaseTimer = ARENA_CONFIG.STARTING_COUNTDOWN_SEC;
     this.state.phaseDuration = ARENA_CONFIG.STARTING_COUNTDOWN_SEC;
     this.state.phaseTimeLeft = ARENA_CONFIG.STARTING_COUNTDOWN_SEC;
   }
 
-  private spawnPowerUps() {
-    this.state.powerUps.clear();
-    const count = 3;
-    const margin = ARENA_CONFIG.TILE_SIZE * 1.4;
-    for (let i = 0; i < count; i++) {
-      const pu = new PowerUp();
-      pu.id = `pu_${this.state.round}_${i}_${Math.floor(Math.random() * 1000)}`;
-      pu.kind = i === 0 ? 'shield' : Math.random() < 0.45 ? 'shield' : 'speed';
-      pu.x = Math.round(margin + Math.random() * (ARENA_WIDTH - margin * 2));
-      pu.y = Math.round(margin + Math.random() * (ARENA_HEIGHT - margin * 2));
-      this.state.powerUps.push(pu);
-    }
-  }
-
-  private setupRoundDisaster() {
-    this.state.meteors.clear();
-    this.iceVelocities.clear();
-    this.bombTransferCooldown.clear();
-    this.state.windX = 0;
-    this.state.windY = 0;
-    this.state.players.forEach((p) => {
-      p.hasBomb = false;
-    });
-
-    const aliveIds: string[] = [];
-    this.state.players.forEach((p) => {
-      if (p.alive) aliveIds.push(p.sessionId);
-    });
-
-    // Pick a fun chaotic disaster every round (bomb only if >= 2 alive)
-    const pool = aliveIds.length >= 2
-      ? ['meteor', 'ice', 'bomb', 'wind']
-      : ['meteor', 'ice', 'wind'];
-    const disaster = pool[(this.state.round - 1 + Math.floor(Math.random() * 2)) % pool.length];
-    this.state.disaster = disaster;
-
-    if (disaster === 'meteor') {
-      this.meteorSpawnTimer = 0.2;
-    } else if (disaster === 'wind') {
-      const a = Math.random() * Math.PI * 2;
-      this.state.windX = Math.round(Math.cos(a) * 100) / 100;
-      this.state.windY = Math.round(Math.sin(a) * 100) / 100;
-    } else if (disaster === 'bomb' && aliveIds.length >= 2) {
-      const bombCount = Math.min(3, Math.max(1, Math.floor(aliveIds.length / 4)));
-      const shuffled = aliveIds.sort(() => Math.random() - 0.5);
-      for (let i = 0; i < bombCount; i++) {
-        const p = this.state.players.get(shuffled[i]);
-        if (p) p.hasBomb = true;
-      }
-    }
-  }
-
-  private spawnMeteorWave() {
-    const count = 3;
-    const margin = ARENA_CONFIG.TILE_SIZE * 1.1;
-    for (let i = 0; i < count; i++) {
-      const m = new Meteor();
-      m.id = `met_${Date.now()}_${i}_${Math.floor(Math.random() * 999)}`;
-      m.x = Math.round(margin + Math.random() * (ARENA_WIDTH - margin * 2));
-      m.y = Math.round(margin + Math.random() * (ARENA_HEIGHT - margin * 2));
-      m.radius = 74;
-      m.timeLeft = 1.35;
-      this.state.meteors.push(m);
-    }
-  }
-
-  private updateMeteors(dt: number) {
-    if (
-      this.state.disaster === 'meteor' &&
-      (this.state.phase === 'scramble' || this.state.phase === 'warning')
-    ) {
-      this.meteorSpawnTimer -= dt;
-      if (this.meteorSpawnTimer <= 0) {
-        this.spawnMeteorWave();
-        this.meteorSpawnTimer = 1.05;
-      }
-    }
-
-    for (let i = this.state.meteors.length - 1; i >= 0; i--) {
-      const m = this.state.meteors[i];
-      if (!m) continue;
-      m.timeLeft = Math.max(0, Math.round((m.timeLeft - dt) * 100) / 100);
-      if (m.timeLeft <= 0) {
-        // Meteor impact! Knock back nearby players dramatically
-        this.state.players.forEach((p) => {
-          if (!p.alive) return;
-          const dx = p.x - m.x;
-          const dy = p.y - m.y;
-          const dist = Math.hypot(dx, dy);
-          if (dist < m.radius + 36) {
-            const nx = dist > 0.1 ? dx / dist : Math.cos(Math.random() * 6.28);
-            const ny = dist > 0.1 ? dy / dist : Math.sin(Math.random() * 6.28);
-            this.knockbacks.set(p.sessionId, { vx: nx * 600, vy: ny * 600 });
-          }
-        });
-        this.broadcast(SERVER_MESSAGES.METEOR_IMPACT, { x: m.x, y: m.y });
-        this.state.meteors.splice(i, 1);
-      }
-    }
-  }
-
-  private startNextRound() {
-    this.state.round += 1;
-    const nextLevel = ((this.state.startingLevel - 1 + (this.state.round - 1)) % 10) + 1;
-    this.state.level = nextLevel;
-    this.obstacleMotions = buildObstaclesForLevel(nextLevel, this.state.obstacles);
-    this.knockbacks.clear();
-    this.shieldProtectedThisDrop.clear();
-    this.tileCrackTimers.clear();
-    this.generateTiles(this.state.round);
-    // Reposition any alive player standing over a newly cut pit onto a valid tile
-    this.state.players.forEach((p) => {
-      if (p.alive && !this.isOnAnySolidTile(p.x, p.y)) {
-        const sp = this.getRandomSpawn();
-        p.x = sp.x;
-        p.y = sp.y;
-      }
-    });
-    this.spawnPowerUps();
-    this.setupRoundDisaster();
-
-    // Pick a Bonus/Safe color (+15 pts per tile, immune to danger wave!)
-    const safeColor = Math.floor(Math.random() * TILE_COLORS.length);
-    this.state.safeColor = safeColor;
-
-    // Longer, dynamic Hex-A-Gone style rounds (7.5s -> 5.0s) so players carve paths & earn points!
-    const roundTime = Math.max(5.0, 7.5 - (this.state.round - 1) * 0.25);
-    const scrambleTime = Math.max(1.5, roundTime - ARENA_CONFIG.WARNING_DURATION_SEC);
-
+  private beginSurvivalMatch() {
     this.state.phase = 'scramble';
-    this.phaseTimer = scrambleTime;
-    this.state.phaseDuration = roundTime;
-    this.state.phaseTimeLeft = Number(roundTime.toFixed(2));
-  }
-
-  private startWarningPhase() {
-    this.state.phase = 'warning';
-    this.phaseTimer = ARENA_CONFIG.WARNING_DURATION_SEC;
-    this.state.phaseTimeLeft = ARENA_CONFIG.WARNING_DURATION_SEC;
-  }
-
-  private startDropPhase() {
-    this.state.phase = 'drop';
-    this.phaseTimer = 1.6;
-    this.state.phaseDuration = 1.6;
-    this.state.phaseTimeLeft = 1.6;
-
-    // Instead of dropping ALL other colors at once, drop 2 random danger colors (keeping the Safe Color intact!)
-    // so the match stays exciting and continues across multiple levels!
-    const otherColors = TILE_COLORS.map((c) => c.id).filter((id) => id !== this.state.safeColor);
-    const shuffled = otherColors.sort(() => Math.random() - 0.5);
-    const dangerSet = new Set(shuffled.slice(0, 2));
-
-    for (let i = 0; i < this.state.tiles.length; i++) {
-      const val = this.state.tiles[i];
-      if (val === undefined || val < 0) continue;
-      const baseColor = val >= 10 ? val - 10 : val;
-      if (dangerSet.has(baseColor)) {
-        this.state.tiles[i] = -1;
-        this.tileCrackTimers.delete(i);
-      }
-    }
-
-    // Detonate remaining Hot Bombs!
-    if (this.state.disaster === 'bomb') {
-      this.state.players.forEach((p) => {
-        if (p.alive && p.hasBomb) {
-          p.hasBomb = false;
-          this.broadcast(SERVER_MESSAGES.BOMB_EXPLODED, {
-            x: p.x,
-            y: p.y,
-            victimName: p.name,
-          });
-          if (p.hasShield) {
-            this.shieldProtectedThisDrop.add(p.sessionId);
-          } else {
-            const a = Math.random() * Math.PI * 2;
-            this.knockbacks.set(p.sessionId, {
-              vx: Math.cos(a) * 680,
-              vy: Math.sin(a) * 680,
-            });
-          }
-        }
-      });
-    }
-
-    // Check who is over a void/hole now
-    this.evaluateRingOutEliminations();
-  }
-
-  private startRoundEndPhase() {
-    // Consume shields that saved players during this drop
-    this.shieldProtectedThisDrop.forEach((sid) => {
-      const p = this.state.players.get(sid);
-      if (p) p.hasShield = false;
-    });
-    this.shieldProtectedThisDrop.clear();
-
-    // Award surviving players +1 round survived & +30 survival bonus points
-    this.state.players.forEach((p) => {
-      if (p.alive) {
-        p.roundsSurvived = this.state.round;
-        p.score += 30;
-      }
-    });
-
-    if (this.checkWinCondition()) {
-      return;
-    }
-
-    this.state.phase = 'round_end';
-    this.state.safeColor = -1;
-    this.phaseTimer = ARENA_CONFIG.ROUND_END_DURATION_SEC;
-    this.state.phaseDuration = ARENA_CONFIG.ROUND_END_DURATION_SEC;
-    this.state.phaseTimeLeft = ARENA_CONFIG.ROUND_END_DURATION_SEC;
+    this.state.matchTimeSec = 0;
+    this.state.phaseTimeLeft = 0;
+    this.state.phaseDuration = 0;
+    this.spawnPowerUp();
+    this.spawnPowerUp();
   }
 
   private resetToLobby() {
@@ -636,6 +485,12 @@ export class SonKisiRoom extends Room<GameState> {
     this.isSoloPractice = false;
     this.state.phase = 'lobby';
     this.state.round = 0;
+    this.state.matchTimeSec = 0;
+    this.state.shrinkStage = 0;
+    this.state.finalDuel = false;
+    this.state.disaster = 'none';
+    this.state.windX = 0;
+    this.state.windY = 0;
     this.state.safeColor = -1;
     this.state.phaseTimeLeft = 0;
     this.state.phaseDuration = 0;
@@ -643,6 +498,13 @@ export class SonKisiRoom extends Room<GameState> {
     this.state.winnerName = '';
     this.state.winnerAvatar = '';
     this.phaseTimer = 0;
+    this.tileCrackTimers.clear();
+    this.electricTileIndices.clear();
+    this.state.powerUps.clear();
+    this.state.meteors.clear();
+
+    this.generateTiles();
+    this.obstacleMotions = buildObstaclesForLevel(this.state.level, this.state.obstacles);
 
     this.state.players.forEach((p) => {
       p.alive = true;
@@ -650,45 +512,198 @@ export class SonKisiRoom extends Room<GameState> {
       p.roundsSurvived = 0;
       p.hasShield = false;
       p.speedBoost = false;
-      p.hasBomb = false;
-      p.kills = 0;
+      p.hasDoubleJump = false;
+      p.hasPushPower = false;
       p.score = 0;
-      p.dashCooldown = 0;
+      p.kills = 0;
+      p.z = 0;
       const spawn = this.getRandomSpawn();
       p.x = spawn.x;
       p.y = spawn.y;
     });
-
-    this.dashTimers.clear();
-    this.speedBoostTimers.clear();
-    this.shieldProtectedThisDrop.clear();
-    this.tileCrackTimers.clear();
-    this.iceVelocities.clear();
-    this.lastPushedBy.clear();
-    this.bombTransferCooldown.clear();
-    this.state.powerUps.clear();
-    this.state.meteors.clear();
-    this.state.disaster = 'none';
-    this.state.windX = 0;
-    this.state.windY = 0;
-
-    this.generateTiles(1);
     this.recountAlive();
   }
 
-  private updateCrackingTiles(dt: number) {
-    if (
-      this.state.phase !== 'scramble' &&
-      this.state.phase !== 'warning' &&
-      this.state.phase !== 'drop'
-    ) {
-      return;
+  private spawnPowerUp() {
+    if (this.state.powerUps.length >= 4) return;
+    const tileSize = ARENA_CONFIG.TILE_SIZE;
+    const intact: number[] = [];
+    for (let i = 0; i < this.state.tiles.length; i++) {
+      const v = this.state.tiles[i];
+      if (v !== undefined && v >= 0 && v < 10) intact.push(i);
+    }
+    if (intact.length === 0) return;
+
+    const pickIdx = intact[Math.floor(Math.random() * intact.length)];
+    const col = pickIdx % ARENA_CONFIG.GRID_COLS;
+    const row = Math.floor(pickIdx / ARENA_CONFIG.GRID_COLS);
+    const kinds: PowerUpKind[] = ['shield', 'speed', 'double_jump', 'push'];
+    const kind = kinds[Math.floor(Math.random() * kinds.length)];
+
+    const pu = new PowerUp();
+    pu.id = `pu_${Date.now()}_${Math.floor(Math.random() * 9999)}`;
+    pu.kind = kind;
+    pu.x = Math.round(col * tileSize + tileSize / 2);
+    pu.y = Math.round(row * tileSize + tileSize / 2);
+    this.state.powerUps.push(pu);
+  }
+
+  private triggerArenaShrink(stage: number) {
+    this.state.shrinkStage = stage;
+    const cols = ARENA_CONFIG.GRID_COLS;
+    const rows = ARENA_CONFIG.GRID_ROWS;
+    const ringDepth = stage; // stage 1 -> outer 1 ring, stage 2 -> 2 rings, stage 3 -> 3 rings
+
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const isOuter =
+          row < ringDepth ||
+          row >= rows - ringDepth ||
+          col < ringDepth ||
+          col >= cols - ringDepth;
+        if (!isOuter) continue;
+
+        const idx = row * cols + col;
+        const val = this.state.tiles[idx];
+        if (val !== undefined && val >= 0) {
+          const base = val >= 20 ? val - 20 : val >= 10 ? val - 10 : val;
+          this.state.tiles[idx] = base + 10;
+          // Outer ring collapses rapidly (1.3s warning!)
+          const existing = this.tileCrackTimers.get(idx);
+          if (existing === undefined || existing > 1.3) {
+            this.tileCrackTimers.set(idx, 1.3);
+          }
+        }
+      }
+    }
+  }
+
+  private clearElectricTiles() {
+    this.electricTileIndices.forEach((idx) => {
+      const val = this.state.tiles[idx];
+      if (val !== undefined && val >= 20) {
+        this.state.tiles[idx] = val - 20;
+      }
+    });
+    this.electricTileIndices.clear();
+  }
+
+  private triggerRandomEvent() {
+    this.clearElectricTiles();
+    this.state.windX = 0;
+    this.state.windY = 0;
+
+    const events = ['electric', 'meteor', 'wind', 'darkness'] as const;
+    const picked = events[Math.floor(Math.random() * events.length)];
+    this.state.disaster = picked;
+    this.eventEndAtSec = this.state.matchTimeSec + SURVIVAL_CONFIG.EVENT_DURATION_SEC;
+
+    if (picked === 'electric') {
+      const intact: number[] = [];
+      for (let i = 0; i < this.state.tiles.length; i++) {
+        const v = this.state.tiles[i];
+        if (v !== undefined && v >= 0 && v < 10) intact.push(i);
+      }
+      intact.sort(() => Math.random() - 0.5);
+      const count = Math.min(12, intact.length);
+      for (let i = 0; i < count; i++) {
+        const idx = intact[i];
+        const v = this.state.tiles[idx];
+        if (v !== undefined && v >= 0 && v < 10) {
+          this.state.tiles[idx] = v + 20;
+          this.electricTileIndices.add(idx);
+        }
+      }
+    } else if (picked === 'meteor') {
+      this.meteorSpawnTimer = 0.2;
+    } else if (picked === 'wind') {
+      const a = Math.random() * Math.PI * 2;
+      this.state.windX = Math.round(Math.cos(a) * 100) / 100;
+      this.state.windY = Math.round(Math.sin(a) * 100) / 100;
+    }
+  }
+
+  private spawnMeteorWave() {
+    const intact: number[] = [];
+    for (let i = 0; i < this.state.tiles.length; i++) {
+      const v = this.state.tiles[i];
+      if (v !== undefined && v >= 0) intact.push(i);
+    }
+    if (intact.length === 0) return;
+
+    const tileSize = ARENA_CONFIG.TILE_SIZE;
+    const count = Math.min(3, intact.length);
+    for (let i = 0; i < count; i++) {
+      const idx = intact[Math.floor(Math.random() * intact.length)];
+      const col = idx % ARENA_CONFIG.GRID_COLS;
+      const row = Math.floor(idx / ARENA_CONFIG.GRID_COLS);
+      const m = new Meteor();
+      m.id = `met_${Date.now()}_${i}_${Math.floor(Math.random() * 999)}`;
+      m.x = Math.round(col * tileSize + tileSize / 2);
+      m.y = Math.round(row * tileSize + tileSize / 2);
+      m.radius = 74;
+      m.timeLeft = 1.4;
+      this.state.meteors.push(m);
+    }
+  }
+
+  private updateMeteors(dt: number) {
+    if (this.state.phase === 'scramble' && this.state.disaster === 'meteor') {
+      this.meteorSpawnTimer -= dt;
+      if (this.meteorSpawnTimer <= 0) {
+        this.spawnMeteorWave();
+        this.meteorSpawnTimer = 1.5;
+      }
     }
 
-    // 1. Trigger cracking on any intact tile (0..5) an alive player steps onto, awarding live points!
+    const tileSize = ARENA_CONFIG.TILE_SIZE;
+    for (let i = this.state.meteors.length - 1; i >= 0; i--) {
+      const m = this.state.meteors[i];
+      if (!m) continue;
+      m.timeLeft = Math.max(0, Math.round((m.timeLeft - dt) * 100) / 100);
+      if (m.timeLeft <= 0) {
+        // Destroy impacted tile permanently!
+        const col = Math.floor(m.x / tileSize);
+        const row = Math.floor(m.y / tileSize);
+        if (
+          col >= 0 &&
+          col < ARENA_CONFIG.GRID_COLS &&
+          row >= 0 &&
+          row < ARENA_CONFIG.GRID_ROWS
+        ) {
+          const idx = row * ARENA_CONFIG.GRID_COLS + col;
+          this.state.tiles[idx] = -1;
+          this.tileCrackTimers.delete(idx);
+          this.electricTileIndices.delete(idx);
+        }
+
+        // Knock back nearby players
+        this.state.players.forEach((p) => {
+          if (!p.alive || p.hasShield) return;
+          const dx = p.x - m.x;
+          const dy = p.y - m.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist < m.radius + 36) {
+            const nx = dist > 0.1 ? dx / dist : Math.cos(Math.random() * 6.28);
+            const ny = dist > 0.1 ? dy / dist : Math.sin(Math.random() * 6.28);
+            this.knockbacks.set(p.sessionId, { vx: nx * 580, vy: ny * 580 });
+          }
+        });
+
+        this.broadcast(SERVER_MESSAGES.METEOR_IMPACT, { x: m.x, y: m.y });
+        this.state.meteors.splice(i, 1);
+      }
+    }
+  }
+
+  private updateCrackingTiles(dt: number) {
+    if (this.state.phase !== 'scramble') return;
+
     const tileSize = ARENA_CONFIG.TILE_SIZE;
     this.state.players.forEach((p) => {
-      if (!p.alive) return;
+      // Only grounded players crack tiles or get shocked by electric tiles!
+      if (!p.alive || p.z > 0.15) return;
+
       const col = Math.floor(p.x / tileSize);
       const row = Math.floor(p.y / tileSize);
       if (
@@ -699,17 +714,32 @@ export class SonKisiRoom extends Room<GameState> {
       ) {
         const idx = row * ARENA_CONFIG.GRID_COLS + col;
         const val = this.state.tiles[idx];
-        if (val !== undefined && val >= 0 && val < 10) {
-          // Mark tile as cracking (val + 10) — drops in 0.72s!
+        if (val === undefined || val < 0) return;
+
+        // Electric tile hazard shock!
+        if (val >= 20) {
+          const nextShock = this.electricShockCooldown.get(p.sessionId) ?? 0;
+          if (!p.hasShield && this.elapsedSec > nextShock) {
+            this.electricShockCooldown.set(p.sessionId, this.elapsedSec + 0.9);
+            const a = Math.random() * Math.PI * 2;
+            this.knockbacks.set(p.sessionId, {
+              vx: Math.cos(a) * 460,
+              vy: Math.sin(a) * 460,
+            });
+          }
+          return;
+        }
+
+        // Intact tile (0..5) -> starts 2.0s crack animation, then permanently disappears!
+        if (val >= 0 && val < 10) {
           this.state.tiles[idx] = val + 10;
-          this.tileCrackTimers.set(idx, 0.72);
-          // Award points: +15 for Bonus/Safe Color, +5 for regular tile!
-          p.score += val === this.state.safeColor ? 15 : 5;
+          this.tileCrackTimers.set(idx, SURVIVAL_CONFIG.TILE_CRACK_SEC);
+          p.score += 5;
         }
       }
     });
 
-    // 2. Count down cracking tiles and drop them individually when their timer hits 0!
+    // Countdown cracking tiles -> permanently remove at 0
     this.tileCrackTimers.forEach((left, idx) => {
       const next = left - dt;
       if (next <= 0) {
@@ -725,72 +755,97 @@ export class SonKisiRoom extends Room<GameState> {
     this.elapsedSec += dt;
     updateObstacles(this.state.obstacles, this.obstacleMotions, this.elapsedSec);
     this.updateMeteors(dt);
-    this.updateCrackingTiles(dt);
 
-    // 1. Simulate player movement (authoritative)
     const canMove =
       this.state.phase === 'lobby' ||
       this.state.phase === 'countdown' ||
-      this.state.phase === 'scramble' ||
-      this.state.phase === 'warning' ||
-      this.state.phase === 'drop' ||
-      this.state.phase === 'round_end';
+      this.state.phase === 'scramble';
 
     if (canMove) {
       this.simulateMovement(dt);
     }
 
-    // 2. Continuous fall check:
-    // Any player who steps or gets pushed into a dropped tile hole or off the edge falls!
-    if (
-      this.state.phase === 'scramble' ||
-      this.state.phase === 'warning' ||
-      this.state.phase === 'drop'
-    ) {
-      this.evaluateRingOutEliminations();
-    }
+    if (this.state.phase === 'scramble') {
+      // Advance authoritative match timer
+      this.state.matchTimeSec = Math.round((this.state.matchTimeSec + dt) * 10) / 10;
 
-    // 3. Phase state machine
-    if (this.state.phase === 'lobby' || this.state.phase === 'finished') {
+      // Award +20 survival points every 10 seconds!
+      const bucket = Math.floor(this.state.matchTimeSec / 10);
+      if (bucket > this.lastSurvivalPointBucket) {
+        this.lastSurvivalPointBucket = bucket;
+        this.state.players.forEach((p) => {
+          if (p.alive) {
+            p.score += SURVIVAL_CONFIG.POINTS_PER_10_SEC;
+            p.roundsSurvived = bucket;
+          }
+        });
+      }
+
+      // Arena Shrink stages (30s, 60s, 90s or Final 2 Duel!)
+      if (this.state.shrinkStage < 1 && this.state.matchTimeSec >= SURVIVAL_CONFIG.SHRINK_STAGE_1_SEC) {
+        this.triggerArenaShrink(1);
+      }
+      if (this.state.shrinkStage < 2 && this.state.matchTimeSec >= SURVIVAL_CONFIG.SHRINK_STAGE_2_SEC) {
+        this.triggerArenaShrink(2);
+      }
+      if (
+        this.state.shrinkStage < 3 &&
+        (this.state.matchTimeSec >= SURVIVAL_CONFIG.SHRINK_STAGE_3_SEC ||
+          (!this.isSoloPractice && this.state.aliveCount === 2 && this.state.totalMatchPlayers > 2))
+      ) {
+        this.state.finalDuel = true;
+        this.triggerArenaShrink(3);
+      }
+
+      // Random Event every 20 seconds (10s duration)
+      if (this.state.disaster !== 'none' && this.state.matchTimeSec >= this.eventEndAtSec) {
+        this.clearElectricTiles();
+        this.state.disaster = 'none';
+        this.state.windX = 0;
+        this.state.windY = 0;
+      }
+      if (this.state.matchTimeSec >= this.nextEventAtSec) {
+        this.nextEventAtSec += SURVIVAL_CONFIG.EVENT_INTERVAL_SEC;
+        this.triggerRandomEvent();
+      }
+
+      // Spawn random Power-Ups periodically
+      this.powerUpSpawnTimer -= dt;
+      if (this.powerUpSpawnTimer <= 0) {
+        this.spawnPowerUp();
+        this.powerUpSpawnTimer = SURVIVAL_CONFIG.POWERUP_SPAWN_INTERVAL_SEC;
+      }
+
+      this.updateCrackingTiles(dt);
+      this.evaluateFalls();
       return;
     }
 
-    this.phaseTimer -= dt;
-
-    if (this.state.phase === 'scramble') {
-      this.state.phaseTimeLeft = Math.max(
-        0,
-        Number((this.phaseTimer + ARENA_CONFIG.WARNING_DURATION_SEC).toFixed(2))
-      );
-      if (this.phaseTimer <= 0) {
-        this.startWarningPhase();
-      }
-    } else if (this.state.phase === 'warning') {
-      this.state.phaseTimeLeft = Math.max(0, Number(this.phaseTimer.toFixed(2)));
-      if (this.phaseTimer <= 0) {
-        this.startDropPhase();
-      }
-    } else if (this.state.phase === 'drop') {
-      this.state.phaseTimeLeft = Math.max(0, Number(this.phaseTimer.toFixed(2)));
-      if (this.phaseTimer <= 0) {
-        this.startRoundEndPhase();
-      }
-    } else if (this.state.phase === 'round_end') {
-      this.state.phaseTimeLeft = Math.max(0, Number(this.phaseTimer.toFixed(2)));
-      if (this.phaseTimer <= 0) {
-        this.startNextRound();
-      }
-    } else if (this.state.phase === 'countdown') {
+    if (this.state.phase === 'countdown') {
+      this.phaseTimer -= dt;
       this.state.phaseTimeLeft = Math.max(0, Number(this.phaseTimer.toFixed(2)));
       if (this.state.players.size >= this.maxClients || this.phaseTimer <= 0) {
         this.startStartingPhase();
       }
     } else if (this.state.phase === 'starting') {
+      this.phaseTimer -= dt;
       this.state.phaseTimeLeft = Math.max(0, Number(this.phaseTimer.toFixed(2)));
       if (this.phaseTimer <= 0) {
-        this.startNextRound();
+        this.beginSurvivalMatch();
       }
     }
+  }
+
+  private decrementTimer(map: Map<string, number>, sid: string, dt: number): boolean {
+    const left = map.get(sid);
+    if (left === undefined) return false;
+    const next = left - dt;
+    if (next <= 0) {
+      map.delete(sid);
+      return false;
+    }
+    map.set(sid, next);
+    return true;
   }
 
   private simulateMovement(dt: number) {
@@ -799,6 +854,7 @@ export class SonKisiRoom extends Room<GameState> {
     const maxX = ARENA_WIDTH - ARENA_CONFIG.PLAYER_RADIUS;
     const minY = ARENA_CONFIG.PLAYER_RADIUS;
     const maxY = ARENA_HEIGHT - ARENA_CONFIG.PLAYER_RADIUS;
+    const isCombat = this.state.phase === 'scramble';
 
     const activePlayers: Player[] = [];
 
@@ -808,78 +864,68 @@ export class SonKisiRoom extends Room<GameState> {
         player.vy = 0;
         return;
       }
-      const input = this.inputs.get(player.sessionId);
+
+      const sid = player.sessionId;
+      const input = this.inputs.get(sid);
       let dx = input?.dx ?? 0;
       let dy = input?.dy ?? 0;
 
-      // Update dash cooldown
+      // Cooldown & power-up timers
       if (player.dashCooldown > 0) {
         player.dashCooldown = Math.max(0, Math.round((player.dashCooldown - dt) * 10) / 10);
       }
+      player.hasShield = this.decrementTimer(this.shieldTimers, sid, dt);
+      player.speedBoost = this.decrementTimer(this.speedTimers, sid, dt);
+      player.hasDoubleJump = this.decrementTimer(this.doubleJumpTimers, sid, dt);
+      player.hasPushPower = this.decrementTimer(this.pushPowerTimers, sid, dt);
 
-      // Update speed boost timer
-      const sbLeft = this.speedBoostTimers.get(player.sessionId);
-      if (sbLeft !== undefined) {
-        const nextSb = sbLeft - dt;
-        if (nextSb <= 0) {
-          this.speedBoostTimers.delete(player.sessionId);
-          player.speedBoost = false;
-        } else {
-          this.speedBoostTimers.set(player.sessionId, nextSb);
+      // Jump / vertical physics
+      let vz = this.verticalVel.get(sid) ?? 0;
+      if (player.z > 0 || vz > 0) {
+        player.z = Math.max(0, Math.round((player.z + vz * dt) * 100) / 100);
+        vz -= 38 * dt;
+        if (player.z <= 0) {
+          player.z = 0;
+          vz = 0;
+          this.jumpsUsed.set(sid, 0);
         }
+        this.verticalVel.set(sid, vz);
       }
 
-      // Apply active dash velocity override
-      let speedMult = player.speedBoost ? 1.38 : 1.0;
-      const dash = this.dashTimers.get(player.sessionId);
+      // Speed multiplier (Super Speed = +45%, Dash = 2.35x)
+      let speedMult = player.speedBoost ? 1.45 : 1.0;
+      const dash = this.dashTimers.get(sid);
       if (dash) {
         dx = dash.dx;
         dy = dash.dy;
         speedMult = DASH_CONFIG.SPEED_MULTIPLIER;
         dash.timeLeft -= dt;
-        if (dash.timeLeft <= 0) {
-          this.dashTimers.delete(player.sessionId);
-        }
+        if (dash.timeLeft <= 0) this.dashTimers.delete(sid);
       }
 
       player.vx = Math.round(dx * 100) / 100;
       player.vy = Math.round(dy * 100) / 100;
 
-      const kb = this.knockbacks.get(player.sessionId);
-      const kbVx = kb?.vx ?? 0;
-      const kbVy = kb?.vy ?? 0;
+      const kb = this.knockbacks.get(sid);
+      const kbVx = player.hasShield ? 0 : kb?.vx ?? 0;
+      const kbVy = player.hasShield ? 0 : kb?.vy ?? 0;
 
-      // Ice floor slippery momentum vs normal crisp movement
-      let moveVx = dx * speed * speedMult;
-      let moveVy = dy * speed * speedMult;
+      const windPushX =
+        isCombat && this.state.disaster === 'wind' && !player.hasShield
+          ? this.state.windX * 125
+          : 0;
+      const windPushY =
+        isCombat && this.state.disaster === 'wind' && !player.hasShield
+          ? this.state.windY * 125
+          : 0;
 
-      if (this.state.disaster === 'ice' && !dash) {
-        const iv = this.iceVelocities.get(player.sessionId) ?? { vx: 0, vy: 0 };
-        const accel = Math.min(1, dt * 3.4);
-        iv.vx += (moveVx * 1.15 - iv.vx) * accel;
-        iv.vy += (moveVy * 1.15 - iv.vy) * accel;
-        this.iceVelocities.set(player.sessionId, iv);
-        moveVx = iv.vx;
-        moveVy = iv.vy;
-      }
-
-      // Storm wind push
-      const windPushX = this.state.disaster === 'wind' ? this.state.windX * 115 : 0;
-      const windPushY = this.state.disaster === 'wind' ? this.state.windY * 115 : 0;
-
-      const totalVx = moveVx + kbVx + windPushX;
-      const totalVy = moveVy + kbVy + windPushY;
-
-      const isActiveCombat =
-        this.state.phase === 'scramble' ||
-        this.state.phase === 'warning' ||
-        this.state.phase === 'drop';
+      const totalVx = dx * speed * speedMult + kbVx + windPushX;
+      const totalVy = dy * speed * speedMult + kbVy + windPushY;
 
       if (Math.abs(totalVx) > 2 || Math.abs(totalVy) > 2) {
         let nx = player.x + totalVx * dt;
         let ny = player.y + totalVy * dt;
-        // In lobby/countdown keep players inside the arena; during combat allow ring-out knocks off the edge!
-        if (!isActiveCombat) {
+        if (!isCombat) {
           nx = Math.max(minX, Math.min(maxX, nx));
           ny = Math.max(minY, Math.min(maxY, ny));
         } else {
@@ -893,28 +939,36 @@ export class SonKisiRoom extends Room<GameState> {
       if (kb) {
         kb.vx *= Math.pow(0.05, dt);
         kb.vy *= Math.pow(0.05, dt);
-        if (Math.hypot(kb.vx, kb.vy) < 8) {
-          this.knockbacks.delete(player.sessionId);
-        }
+        if (Math.hypot(kb.vx, kb.vy) < 8) this.knockbacks.delete(sid);
       }
 
-      resolveObstacleCollisions(player, this.state.obstacles, this.knockbacks);
-      player.x = Math.round(player.x * 10) / 10;
-      player.y = Math.round(player.y * 10) / 10;
+      // Obstacles (can jump OVER low sweepers/sliders if high enough, pillars always collide)
+      if (player.z < 1.3) {
+        resolveObstacleCollisions(player, this.state.obstacles, this.knockbacks);
+        player.x = Math.round(player.x * 10) / 10;
+        player.y = Math.round(player.y * 10) / 10;
+      }
 
-      // Check Power-Up pickups
+      // Power-Up Pickups
       for (let i = this.state.powerUps.length - 1; i >= 0; i--) {
         const pu = this.state.powerUps[i];
         if (!pu) continue;
-        if (Math.hypot(player.x - pu.x, player.y - pu.y) < ARENA_CONFIG.PLAYER_RADIUS + 24) {
+        if (Math.hypot(player.x - pu.x, player.y - pu.y) < ARENA_CONFIG.PLAYER_RADIUS + 26) {
           if (pu.kind === 'shield') {
             player.hasShield = true;
-          } else {
+            this.shieldTimers.set(sid, SURVIVAL_CONFIG.SHIELD_DURATION_SEC);
+          } else if (pu.kind === 'speed') {
             player.speedBoost = true;
-            this.speedBoostTimers.set(player.sessionId, 4.5);
+            this.speedTimers.set(sid, SURVIVAL_CONFIG.SPEED_DURATION_SEC);
+          } else if (pu.kind === 'double_jump') {
+            player.hasDoubleJump = true;
+            this.doubleJumpTimers.set(sid, SURVIVAL_CONFIG.DOUBLE_JUMP_DURATION_SEC);
+          } else if (pu.kind === 'push') {
+            player.hasPushPower = true;
+            this.pushPowerTimers.set(sid, SURVIVAL_CONFIG.PUSH_DURATION_SEC);
           }
           this.broadcast(SERVER_MESSAGES.POWERUP_PICKED, {
-            sessionId: player.sessionId,
+            sessionId: sid,
             kind: pu.kind,
             x: pu.x,
             y: pu.y,
@@ -926,7 +980,7 @@ export class SonKisiRoom extends Room<GameState> {
       activePlayers.push(player);
     });
 
-    // Player-to-player separation, DASH KNOCKBACK pushes, and HOT BOMB passing!
+    // Player-to-player pushing & Dash Slam
     const minDist = ARENA_CONFIG.PLAYER_RADIUS * 1.45;
     const minDistSq = minDist * minDist;
     const hitDistSq = (ARENA_CONFIG.PLAYER_RADIUS * 2.35) ** 2;
@@ -937,6 +991,9 @@ export class SonKisiRoom extends Room<GameState> {
       for (let j = i + 1; j < activePlayers.length; j++) {
         const b = activePlayers[j];
         const bDashing = this.dashTimers.has(b.sessionId);
+        // Skip collision if one is jumping high over the other
+        if (Math.abs(a.z - b.z) > 1.2) continue;
+
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         const distSq = dx * dx + dy * dy;
@@ -946,58 +1003,30 @@ export class SonKisiRoom extends Room<GameState> {
           const nx = dx / dist;
           const ny = dy / dist;
 
-          // Dash SLAM knockback push + tactile walking bump push!
-          if (aDashing && !bDashing) {
-            this.knockbacks.set(b.sessionId, { vx: nx * 660, vy: ny * 660 });
+          if (aDashing && !bDashing && !b.hasShield) {
+            const power = a.hasPushPower ? 760 : 620;
+            this.knockbacks.set(b.sessionId, { vx: nx * power, vy: ny * power });
             this.lastPushedBy.set(b.sessionId, { pusherId: a.sessionId, at: this.elapsedSec });
-          } else if (bDashing && !aDashing) {
-            this.knockbacks.set(a.sessionId, { vx: -nx * 660, vy: -ny * 660 });
+          } else if (bDashing && !aDashing && !a.hasShield) {
+            const power = b.hasPushPower ? 760 : 620;
+            this.knockbacks.set(a.sessionId, { vx: -nx * power, vy: -ny * power });
             this.lastPushedBy.set(a.sessionId, { pusherId: b.sessionId, at: this.elapsedSec });
           } else if (distSq < minDistSq) {
-            // Regular walking body-check bump!
-            const aSpeed = Math.hypot(a.vx, a.vy);
-            const bSpeed = Math.hypot(b.vx, b.vy);
-            if (aSpeed > 0.25) {
+            if (Math.hypot(a.vx, a.vy) > 0.25 && !b.hasShield) {
               const curB = this.knockbacks.get(b.sessionId) ?? { vx: 0, vy: 0 };
-              this.knockbacks.set(b.sessionId, {
-                vx: curB.vx + nx * 165,
-                vy: curB.vy + ny * 165,
-              });
+              this.knockbacks.set(b.sessionId, { vx: curB.vx + nx * 165, vy: curB.vy + ny * 165 });
               this.lastPushedBy.set(b.sessionId, { pusherId: a.sessionId, at: this.elapsedSec });
             }
-            if (bSpeed > 0.25) {
+            if (Math.hypot(b.vx, b.vy) > 0.25 && !a.hasShield) {
               const curA = this.knockbacks.get(a.sessionId) ?? { vx: 0, vy: 0 };
-              this.knockbacks.set(a.sessionId, {
-                vx: curA.vx - nx * 165,
-                vy: curA.vy - ny * 165,
-              });
+              this.knockbacks.set(a.sessionId, { vx: curA.vx - nx * 165, vy: curA.vy - ny * 165 });
               this.lastPushedBy.set(a.sessionId, { pusherId: b.sessionId, at: this.elapsedSec });
             }
-          }
-
-          // Hot Bomb pass on contact!
-          if (this.state.disaster === 'bomb' && a.hasBomb !== b.hasBomb) {
-            const cdA = this.bombTransferCooldown.get(a.sessionId) ?? 0;
-            const cdB = this.bombTransferCooldown.get(b.sessionId) ?? 0;
-            if (this.elapsedSec > cdA && this.elapsedSec > cdB) {
-              if (a.hasBomb) {
-                a.hasBomb = false;
-                b.hasBomb = true;
-              } else {
-                b.hasBomb = false;
-                a.hasBomb = true;
-              }
-              this.bombTransferCooldown.set(a.sessionId, this.elapsedSec + 0.6);
-              this.bombTransferCooldown.set(b.sessionId, this.elapsedSec + 0.6);
-            }
-          }
-
-          if (distSq < minDistSq) {
             const overlap = (minDist - dist) * 0.25;
-            a.x = Math.round(Math.max(minX, Math.min(maxX, a.x - nx * overlap)) * 10) / 10;
-            a.y = Math.round(Math.max(minY, Math.min(maxY, a.y - ny * overlap)) * 10) / 10;
-            b.x = Math.round(Math.max(minX, Math.min(maxX, b.x + nx * overlap)) * 10) / 10;
-            b.y = Math.round(Math.max(minY, Math.min(maxY, b.y + ny * overlap)) * 10) / 10;
+            a.x = Math.round((a.x - nx * overlap) * 10) / 10;
+            a.y = Math.round((a.y - ny * overlap) * 10) / 10;
+            b.x = Math.round((b.x + nx * overlap) * 10) / 10;
+            b.y = Math.round((b.y + ny * overlap) * 10) / 10;
           }
         }
       }
@@ -1027,32 +1056,24 @@ export class SonKisiRoom extends Room<GameState> {
       ) {
         const idx = row * ARENA_CONFIG.GRID_COLS + col;
         const val = this.state.tiles[idx];
-        if (val !== undefined && val >= 0) {
-          return true;
-        }
+        if (val !== undefined && val >= 0) return true;
       }
     }
     return false;
   }
 
-  private evaluateRingOutEliminations() {
+  private evaluateFalls() {
     const falling: Player[] = [];
     let aliveBefore = 0;
 
     this.state.players.forEach((p) => {
       if (p.alive) {
         aliveBefore++;
+        // Airborne players (jumping!) or 3-second Shielded players do NOT fall!
+        if (p.z > 0.15 || p.hasShield) return;
+
         if (!this.isOnAnySolidTile(p.x, p.y)) {
-          if (p.hasShield) {
-            // Magic shield rescues from ring-out once!
-            p.hasShield = false;
-            const sp = this.getRandomSpawn();
-            p.x = sp.x;
-            p.y = sp.y;
-            this.knockbacks.delete(p.sessionId);
-          } else {
-            falling.push(p);
-          }
+          falling.push(p);
         }
       }
     });
@@ -1062,16 +1083,19 @@ export class SonKisiRoom extends Room<GameState> {
     const rankForBatch = aliveBefore;
     for (const p of falling) {
       p.alive = false;
-      p.hasBomb = false;
       p.eliminatedRank = rankForBatch;
-      p.roundsSurvived = Math.max(0, this.state.round - 1);
 
+      // Placement reward bonuses for 2nd & 3rd place!
+      if (p.eliminatedRank === 2) p.score += SURVIVAL_CONFIG.POINTS_SECOND;
+      else if (p.eliminatedRank === 3) p.score += SURVIVAL_CONFIG.POINTS_THIRD;
+
+      // Award Knockout Credit (+50) if someone pushed them within 3.5s
       const push = this.lastPushedBy.get(p.sessionId);
       if (push && this.elapsedSec - push.at <= 3.5) {
         const killer = this.state.players.get(push.pusherId);
         if (killer && killer.sessionId !== p.sessionId) {
           killer.kills += 1;
-          killer.score += 50;
+          killer.score += SURVIVAL_CONFIG.POINTS_PER_KILL;
           this.broadcast(SERVER_MESSAGES.KNOCKOUT_CREDIT, {
             killerSessionId: killer.sessionId,
             killerName: killer.name,
@@ -1087,132 +1111,7 @@ export class SonKisiRoom extends Room<GameState> {
           sessionId: p.sessionId,
           rank: p.eliminatedRank,
           totalPlayers: this.state.totalMatchPlayers,
-          roundsSurvived: p.roundsSurvived,
-        });
-      }
-
-      this.broadcast(SERVER_MESSAGES.ELIMINATION_FEED, {
-        name: p.name,
-        avatar: p.avatar,
-        rank: p.eliminatedRank,
-      });
-    }
-
-    this.recountAlive();
-    this.checkWinCondition();
-  }
-
-  private isOnSafeTile(x: number, y: number): boolean {
-    const tileSize = ARENA_CONFIG.TILE_SIZE;
-    // Check center + 4 small forgiving offsets (5px) so touching edge of safe tile feels fair
-    const offsets = [
-      [0, 0],
-      [5, 0],
-      [-5, 0],
-      [0, 5],
-      [0, -5],
-    ];
-
-    for (const [ox, oy] of offsets) {
-      const col = Math.floor((x + ox) / tileSize);
-      const row = Math.floor((y + oy) / tileSize);
-      if (
-        col >= 0 &&
-        col < ARENA_CONFIG.GRID_COLS &&
-        row >= 0 &&
-        row < ARENA_CONFIG.GRID_ROWS
-      ) {
-        const idx = row * ARENA_CONFIG.GRID_COLS + col;
-        if (this.state.tiles[idx] === this.state.safeColor) {
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-
-  private distanceToNearestSafeTile(x: number, y: number): number {
-    const tileSize = ARENA_CONFIG.TILE_SIZE;
-    let best = Infinity;
-    for (let i = 0; i < this.state.tiles.length; i++) {
-      if (this.state.tiles[i] === this.state.safeColor) {
-        const col = i % ARENA_CONFIG.GRID_COLS;
-        const row = Math.floor(i / ARENA_CONFIG.GRID_COLS);
-        const cx = col * tileSize + tileSize / 2;
-        const cy = row * tileSize + tileSize / 2;
-        const d = Math.hypot(x - cx, y - cy);
-        if (d < best) best = d;
-      }
-    }
-    return best;
-  }
-
-  private evaluateEliminations() {
-    const falling: Player[] = [];
-    let aliveBefore = 0;
-
-    this.state.players.forEach((p) => {
-      if (p.alive) {
-        aliveBefore++;
-        if (!this.isOnSafeTile(p.x, p.y)) {
-          if (p.hasShield) {
-            // Magic shield saves the player from falling during this drop!
-            this.shieldProtectedThisDrop.add(p.sessionId);
-          } else {
-            falling.push(p);
-          }
-        }
-      }
-    });
-
-    if (falling.length === 0) return;
-
-    // If everyone left in a multi-player match would be eliminated on the exact same tick,
-    // spare the one closest to a safe tile so there's always a thrilling winner!
-    if (!this.isSoloPractice && falling.length === aliveBefore && aliveBefore > 1) {
-      falling.sort(
-        (a, b) =>
-          this.distanceToNearestSafeTile(a.x, a.y) -
-          this.distanceToNearestSafeTile(b.x, b.y)
-      );
-      const spared = falling.shift();
-      if (spared) {
-        console.log(
-          `[SonKisiRoom ${this.state.roomCode}] Simultaneous wipeout — ${spared.name} was closest to safe tile and wins!`
-        );
-      }
-    }
-
-    const rankForBatch = aliveBefore;
-    for (const p of falling) {
-      p.alive = false;
-      p.hasBomb = false;
-      p.eliminatedRank = rankForBatch;
-      p.roundsSurvived = Math.max(0, this.state.round - 1);
-
-      // Award Knockout Credit if someone pushed this player within the last 3.5 seconds!
-      const push = this.lastPushedBy.get(p.sessionId);
-      if (push && this.elapsedSec - push.at <= 3.5) {
-        const killer = this.state.players.get(push.pusherId);
-        if (killer && killer.sessionId !== p.sessionId) {
-          killer.kills += 1;
-          killer.score += 50;
-          this.broadcast(SERVER_MESSAGES.KNOCKOUT_CREDIT, {
-            killerSessionId: killer.sessionId,
-            killerName: killer.name,
-            victimName: p.name,
-          });
-        }
-      }
-      this.lastPushedBy.delete(p.sessionId);
-
-      const client = this.clients.find((c) => c.sessionId === p.sessionId);
-      if (client) {
-        client.send(SERVER_MESSAGES.ELIMINATED, {
-          sessionId: p.sessionId,
-          rank: p.eliminatedRank,
-          totalPlayers: this.state.totalMatchPlayers,
-          roundsSurvived: p.roundsSurvived,
+          roundsSurvived: Math.floor(this.state.matchTimeSec),
         });
       }
 
@@ -1235,18 +1134,32 @@ export class SonKisiRoom extends Room<GameState> {
     this.state.aliveCount = count;
   }
 
+  private buildTop3Podium(): PodiumEntry[] {
+    const all = Array.from(this.state.players.values());
+    all.sort((a, b) => {
+      const ra = a.alive ? 1 : a.eliminatedRank || 999;
+      const rb = b.alive ? 1 : b.eliminatedRank || 999;
+      if (ra !== rb) return ra - rb;
+      return b.score - a.score;
+    });
+    return all.slice(0, 3).map((p, idx) => ({
+      rank: idx + 1,
+      sessionId: p.sessionId,
+      name: p.name,
+      avatar: p.avatar,
+      score: p.score,
+      kills: p.kills,
+    }));
+  }
+
   private checkWinCondition(): boolean {
     if (this.state.phase === 'finished' || this.state.phase === 'lobby') {
       return false;
     }
 
-    // In solo practice mode, match only ends when the solo player falls
     if (this.isSoloPractice) {
       if (this.state.aliveCount === 0) {
         this.state.phase = 'finished';
-        this.state.phaseTimeLeft = 0;
-        this.state.winnerSessionId = '';
-        this.state.winnerName = '';
         return true;
       }
       return false;
@@ -1259,26 +1172,28 @@ export class SonKisiRoom extends Room<GameState> {
       });
 
       this.state.phase = 'finished';
-      this.state.phaseTimeLeft = 0;
+      this.clearElectricTiles();
+      this.state.disaster = 'none';
 
       if (winner) {
         const w = winner as Player;
         w.eliminatedRank = 1;
-        w.roundsSurvived = this.state.round;
+        w.score += SURVIVAL_CONFIG.POINTS_FIRST;
         this.state.winnerSessionId = w.sessionId;
         this.state.winnerName = w.name;
         this.state.winnerAvatar = w.avatar;
 
-        const pointsAwarded =
-          w.score + 100 + this.state.totalMatchPlayers * 10 + this.state.round * 15;
+        const podium = this.buildTop3Podium();
 
         this.broadcast(SERVER_MESSAGES.MATCH_WINNER, {
           winnerSessionId: w.sessionId,
           winnerName: w.name,
           winnerAvatar: w.avatar,
-          pointsAwarded,
+          pointsAwarded: w.score,
           totalPlayers: this.state.totalMatchPlayers,
-          roundsPlayed: this.state.round,
+          roundsPlayed: this.state.shrinkStage + 1,
+          matchDurationSec: Math.floor(this.state.matchTimeSec),
+          podium,
         });
       }
 
